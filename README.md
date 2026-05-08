@@ -66,6 +66,17 @@ npm install
 GROQ_API_KEY=... npm run tauri dev
 ```
 
+## Verify the pipeline without installing
+
+You can sanity-check that the Groq Whisper + Llama cleanup chain works on your network and key, without installing the .app:
+
+```bash
+brew install jq ffmpeg  # one time
+GROQ_API_KEY=gsk_... ./scripts/test_pipeline.sh
+```
+
+It synthesizes a WAV via macOS `say`, runs the full pipeline, and prints raw vs cleaned. Pass your own phrase as the first arg.
+
 ## License
 
 GPL-3.0-or-later (desktop core). Cloud / sync / team features (when they exist) will be source-available under a separate license.
