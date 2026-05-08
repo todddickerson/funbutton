@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "FunButton desktop capabilities",
+  "windows": ["settings", "pill"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:webview:default",
+    "core:event:default",
+    "core:image:default",
+    "opener:default",
+    "store:default",
+    "clipboard-manager:default",
+    "autostart:default"
+  ]
+}

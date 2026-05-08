@@ -1,0 +1,36 @@
+html, body, #root { margin: 0; padding: 0; background: transparent; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Inter", sans-serif; -webkit-font-smoothing: antialiased; }
+
+.pill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 56px;
+  margin: 4px;
+  padding: 0 18px;
+  background: rgba(20, 20, 20, 0.92);
+  color: #fff;
+  border-radius: 28px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.pill-label { color: #fff; }
+.pill-msg { color: #ffaa55; font-size: 11px; font-style: italic; }
+
+.pill-recording { background: rgba(255, 51, 102, 0.94); }
+.pill-recording .pill-label::before { animation: pulse 1.2s ease-in-out infinite; }
+
+.pill-transcribing, .pill-cleaning, .pill-pasting { background: rgba(255, 165, 0, 0.94); color: #1a1a1a; }
+.pill-error { background: rgba(255, 80, 80, 0.94); }
+.pill-idle { background: rgba(60, 60, 60, 0.92); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}

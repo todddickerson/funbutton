@@ -1,0 +1,361 @@
+mod app_detect;
+mod audio;
+mod cleanup;
+mod groq;
+mod hotkey;
+mod inject;
+mod ollama;
+mod pipeline;
+mod state;
+
+use crate::audio::Recorder;
+use crate::hotkey::HotkeyEvent;
+use crate::state::{AppState, AppStateHandle, Settings, Status};
+
+use parking_lot::Mutex as PMutex;
+use serde::Serialize;
+use std::sync::mpsc;
+use std::sync::Arc;
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{TrayIcon, TrayIconBuilder},
+    AppHandle, Emitter, Manager,
+};
+
+#[derive(Serialize, Clone)]
+struct StatusEvent {
+    status: &'static str,
+    message: Option<String>,
+}
+
+fn emit_status(app: &AppHandle, status: Status, message: Option<String>) {
+    let _ = app.emit(
+        "funbutton:status",
+        StatusEvent { status: status.label(), message },
+    );
+}
+
+#[derive(Serialize, Clone)]
+struct PipelinePayload {
+    raw: String,
+    cleaned: String,
+    mode: String,
+    backend: String,
+    word_count: usize,
+}
+
+#[tauri::command]
+fn get_settings(state: tauri::State<'_, AppStateHandle>) -> Settings {
+    state.settings.lock().clone()
+}
+
+#[tauri::command]
+fn save_settings(
+    state: tauri::State<'_, AppStateHandle>,
+    settings: Settings,
+) -> Result<(), String> {
+    persist(&settings).map_err(|e| e.to_string())?;
+    *state.settings.lock() = settings;
+    Ok(())
+}
+
+#[tauri::command]
+fn get_status(state: tauri::State<'_, AppStateHandle>) -> String {
+    state.status.lock().label().to_string()
+}
+
+#[tauri::command]
+fn get_last_transcript(state: tauri::State<'_, AppStateHandle>) -> String {
+    state.last_transcript.lock().clone()
+}
+
+#[tauri::command]
+async fn ollama_check(state: tauri::State<'_, AppStateHandle>) -> Result<bool, String> {
+    let url = state.settings.lock().ollama_url.clone();
+    Ok(ollama::is_available(&url).await)
+}
+
+#[tauri::command]
+fn open_settings(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("settings") {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+    Ok(())
+}
+
+fn settings_path() -> std::path::PathBuf {
+    let mut p = dirs_home();
+    p.push(".funbutton");
+    let _ = std::fs::create_dir_all(&p);
+    p.push("settings.json");
+    p
+}
+
+fn dirs_home() -> std::path::PathBuf {
+    if let Ok(h) = std::env::var("HOME") {
+        return std::path::PathBuf::from(h);
+    }
+    std::path::PathBuf::from(".")
+}
+
+fn load_settings() -> Settings {
+    let p = settings_path();
+    if let Ok(bytes) = std::fs::read(&p) {
+        if let Ok(s) = serde_json::from_slice::<Settings>(&bytes) {
+            // Refresh API key from env if file's is empty
+            if s.groq_api_key.is_empty() {
+                let mut s = s;
+                if let Ok(env_key) = std::env::var("GROQ_API_KEY") {
+                    s.groq_api_key = env_key;
+                }
+                return s;
+            }
+            return s;
+        }
+    }
+    Settings::default()
+}
+
+fn persist(s: &Settings) -> anyhow::Result<()> {
+    let p = settings_path();
+    let json = serde_json::to_vec_pretty(s)?;
+    std::fs::write(p, json)?;
+    Ok(())
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    let initial = load_settings();
+    let app_state: AppStateHandle = AppState::new(initial);
+
+    // Hotkey channel
+    let (tx, rx) = mpsc::channel::<HotkeyEvent>();
+    hotkey::spawn_listener(tx);
+
+    // Shared recorder (one at a time)
+    let recorder: Arc<PMutex<Recorder>> = Arc::new(PMutex::new(Recorder::new()));
+
+    let app_state_clone = Arc::clone(&app_state);
+    let recorder_clone = Arc::clone(&recorder);
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
+        .manage(Arc::clone(&app_state))
+        .invoke_handler(tauri::generate_handler![
+            get_settings,
+            save_settings,
+            get_status,
+            get_last_transcript,
+            ollama_check,
+            open_settings,
+        ])
+        .setup(move |app| {
+            // Hide both windows on launch — we are a menu bar app.
+            if let Some(w) = app.get_webview_window("settings") {
+                let _ = w.hide();
+            }
+            if let Some(w) = app.get_webview_window("pill") {
+                let _ = w.hide();
+            }
+
+            // System tray
+            let handle = app.handle().clone();
+            let open_item = MenuItem::with_id(&handle, "open", "Settings", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(&handle, "quit", "Quit FunButton", true, None::<&str>)?;
+            let menu = Menu::with_items(&handle, &[&open_item, &quit_item])?;
+            let tray: TrayIcon = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .icon_as_template(true)
+                .tooltip("FunButton — idle")
+                .menu(&menu)
+                .on_menu_event(move |app, event| match event.id().as_ref() {
+                    "open" => {
+                        if let Some(w) = app.get_webview_window("settings") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .build(app)?;
+
+            // Spawn the hotkey-event handler thread.
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                handle_hotkey_loop(app_handle, app_state_clone, recorder_clone, rx, tray);
+            });
+
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Hide instead of closing — we live in the tray.
+                if window.label() == "settings" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+
+    // Touch the unused state ref so the compiler doesn't complain.
+    let _ = app_state;
+}
+
+fn handle_hotkey_loop(
+    app: AppHandle,
+    state: AppStateHandle,
+    recorder: Arc<PMutex<Recorder>>,
+    rx: mpsc::Receiver<HotkeyEvent>,
+    tray: TrayIcon,
+) {
+    // Tokio runtime for async pipeline calls.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+
+    while let Ok(ev) = rx.recv() {
+        match ev {
+            HotkeyEvent::Down => {
+                let mut rec = recorder.lock();
+                match rec.start() {
+                    Ok(()) => {
+                        *state.status.lock() = Status::Recording;
+                        let _ = tray.set_tooltip(Some("FunButton — recording"));
+                        emit_status(&app, Status::Recording, None);
+                        if let Some(p) = app.get_webview_window("pill") {
+                            let _ = p.show();
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("recorder start failed: {e:#}");
+                        *state.status.lock() = Status::Error;
+                        emit_status(&app, Status::Error, Some(format!("audio: {e}")));
+                    }
+                }
+            }
+            HotkeyEvent::Up => {
+                let wav = {
+                    let mut rec = recorder.lock();
+                    if rec.sample_count() < 4_000 {
+                        // Less than ~50ms at 48kHz stereo — likely an accidental tap.
+                        let _ = rec.stop_and_encode_wav();
+                        *state.status.lock() = Status::Idle;
+                        let _ = tray.set_tooltip(Some("FunButton — idle"));
+                        if let Some(p) = app.get_webview_window("pill") {
+                            let _ = p.hide();
+                        }
+                        emit_status(&app, Status::Idle, Some("too short".into()));
+                        continue;
+                    }
+                    match rec.stop_and_encode_wav() {
+                        Ok(b) => b,
+                        Err(e) => {
+                            log::error!("recorder stop failed: {e:#}");
+                            *state.status.lock() = Status::Error;
+                            emit_status(&app, Status::Error, Some(format!("encode: {e}")));
+                            continue;
+                        }
+                    }
+                };
+
+                let app_h = app.clone();
+                let state_h = Arc::clone(&state);
+                let tray_h = tray.clone();
+                rt.spawn(async move {
+                    let _ = tray_h.set_tooltip(Some("FunButton — transcribing"));
+                    let result = pipeline::run(Arc::clone(&state_h), wav).await;
+                    if let Some(p) = app_h.get_webview_window("pill") {
+                        let _ = p.hide();
+                    }
+                    match result {
+                        Ok(r) => {
+                            *state_h.status.lock() = Status::Pasting;
+                            emit_status(&app_h, Status::Pasting, None);
+                            let to_paste = r.cleaned.clone();
+                            let words = to_paste.split_whitespace().count();
+                            // bump words_today
+                            {
+                                let today = chrono_today();
+                                let mut s = state_h.settings.lock();
+                                if s.words_today_date != today {
+                                    s.words_today = 0;
+                                    s.words_today_date = today;
+                                }
+                                s.words_today += words as u64;
+                                let _ = persist(&s);
+                            }
+                            // Inject on a non-async thread.
+                            let to_paste_owned = to_paste.clone();
+                            std::thread::spawn(move || {
+                                if let Err(e) = inject::paste_text(&to_paste_owned) {
+                                    log::error!("paste failed: {e:#}");
+                                }
+                            });
+                            let _ = app_h.emit(
+                                "funbutton:result",
+                                PipelinePayload {
+                                    raw: r.raw,
+                                    cleaned: r.cleaned,
+                                    mode: r.mode.to_string(),
+                                    backend: r.backend_used.to_string(),
+                                    word_count: words,
+                                },
+                            );
+                            *state_h.status.lock() = Status::Idle;
+                            let _ = tray_h.set_tooltip(Some("FunButton — idle"));
+                            emit_status(&app_h, Status::Idle, None);
+                        }
+                        Err(e) => {
+                            log::error!("pipeline failed: {e:#}");
+                            *state_h.status.lock() = Status::Error;
+                            let _ = tray_h.set_tooltip(Some("FunButton — error"));
+                            emit_status(&app_h, Status::Error, Some(format!("{e:#}")));
+                        }
+                    }
+                });
+            }
+        }
+    }
+}
+
+fn chrono_today() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Rough YYYY-MM-DD using days since epoch — good enough for daily counter rollover.
+    let days = (secs / 86400) as i64;
+    let (y, m, d) = days_to_ymd(days);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+fn days_to_ymd(mut days: i64) -> (i64, u32, u32) {
+    days += 719468;
+    let era = if days >= 0 { days } else { days - 146096 } / 146097;
+    let doe = (days - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}

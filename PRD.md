@@ -10,10 +10,19 @@
 ## North Star
 Todd presses Right Option, talks, releases, and his cleaned-up dictation appears at his cursor in <2 seconds. No cloud lock-in. No 800MB Electron tax. No subscription required.
 
-## Positioning
-- **vs Wispr Flow:** Local-first by default, Linux-friendly, lifetime pricing, open-source desktop core, half the price
-- **vs SuperWhisper / MacWhisper:** Cross-platform, AI cleanup as first-class layer, dev-friendly (handles code/symbols), Tauri lightweight
-- **vs native Dictation:** Actual AI cleanup, customizable, hotkey-driven, app-aware
+## Positioning (sharpened 2026-05-08 after COMPETITIVE-LANDSCAPE.md)
+The "Tauri + local + cheap" cell is **occupied** — Handy (14k★ MIT) and MumbleFlow ($5) already ship the same stack. So FunButton stacks three claims no single competitor owns simultaneously:
+
+1. **Developer-grade out of the box** — code mode in MVP, not V2: spoken `camelCase` / `snake_case` / `kebab-case` / braces / operators / common symbols handled by default. IDE-aware (Cursor / VS Code / Vim / JetBrains). *Whisperer is the only commercial comp; nobody else.*
+2. **Local AI cleanup, no API key required, ever** — bundle a quantized small LLM (Qwen 2.5 0.5B/1.5B GGUF) so cleanup runs on-device. Groq stays the FAST default; local is the toggle that ships in MVP. *MumbleFlow does this at $5 with no brand; we do it with brand.*
+3. **Lifetime + GPLv3 desktop core** — VoiceInk's model ($25-49 paid binary, GPLv3 source). Hostile to enterprise lock-in. *Wispr has zero lifetime ever despite $94M raised — lifetime is the structural weapon.*
+
+**Brand voice:** punk, anti-enterprise, fun. The anti-Wispr — "press the fun button, talk to your computer like it's a friend." Wispr is humorless productivity software. FunButton is the assistant you'd have a beer with.
+
+- **vs Wispr Flow:** Local-first by default, Linux-friendly, lifetime pricing, open-source desktop core (GPLv3), half the price
+- **vs Handy / MumbleFlow:** Dev-grade code mode out of the box, AI cleanup as headline (not transcription), polished brand
+- **vs SuperWhisper / VoiceInk / Voibe:** Cross-platform, on-device LLM cleanup default, code-aware in MVP, fun
+- **vs Whisperer (closest dev comp):** Lifetime + GPLv3 + Linux + on-device LLM
 
 ## Tech Stack (locked in)
 | Layer | Choice | Why |
@@ -40,34 +49,39 @@ For shipped app: user enters their own Groq key in Settings. Defaults pull from 
 ## Scope: 3 Sprints
 
 ### Sprint 1 — MVP (Sat by EOD)
-**Acceptance:** Todd can hold Right Option, talk for up to 60s, release, see clean text appear at cursor in macOS Notes/iMessage/Slack/Cursor.
+**Acceptance:** Todd can hold Right Option, talk for up to 60s, release, see clean text appear at cursor in macOS Notes/iMessage/Slack/Cursor. **Code mode works** — saying "open paren camelCase user name close paren" yields `(userName)` in Cursor. **Local cleanup toggle works** — when Ollama is detected at localhost:11434, cleanup runs on-device with no API key.
 
 - [ ] Tauri 2 project scaffolded, builds on macOS arm64
 - [ ] Global hotkey: Right Option (configurable later) — push-to-talk
 - [ ] Audio capture via `cpal` to in-memory PCM, encoded to wav/flac/mp3 in memory
 - [ ] Visible recording indicator: menu bar icon + small floating pill UI showing waveform
 - [ ] On release: POST audio to Groq Whisper Turbo, get transcript
-- [ ] POST transcript to Groq Llama 3.3 with cleanup prompt → cleaned text
+- [ ] **Cleanup pipeline (pluggable):**
+  - [ ] Default: Groq Llama 3.3 70B (fast, cloud)
+  - [ ] **Local toggle (ships in MVP, not V1.1):** Ollama at `http://localhost:11434` if available — auto-detect, fall back to Groq if unavailable. Recommended model: `qwen2.5:1.5b` (Qwen 2.5 1.5B Q4, ~1GB). Settings UI shows current backend + status.
+- [ ] **Code mode (Sprint 1, was Sprint 2):** When frontmost app is Cursor / VS Code / Vim / JetBrains / Terminal, switch to code-aware cleanup prompt that handles spoken symbols (`camelCase`, `snake_case`, `kebab-case`, `open paren`, `close paren`, `equals`, `arrow`, `open curly`, `dot`, `semicolon`, `dollar`, `at sign`, `pipe`, `ampersand`, etc.) and preserves identifiers verbatim.
 - [ ] Inject cleaned text via clipboard + paste shortcut (preserve original clipboard)
-- [ ] Settings window: API key entry, hotkey display, basic stats (today's word count)
+- [ ] Settings window: API key entry (BYOK), hotkey display, basic stats (today's word count), backend toggle (Groq / Local Ollama / Auto)
 - [ ] Menu bar app: idle/recording/processing states, quit option
 - [ ] Auto-launch on login (optional toggle)
 - [ ] First-run flow: Accessibility permission prompt with clear instructions
+- [ ] LICENSE file: GPLv3 (desktop core)
 
 ### Sprint 2 — V1 (Sun by EOD)
-**Acceptance:** Modes work, history exists, dictionary handles brand names, app feels polished.
+**Acceptance:** Modes work, history exists, dictionary handles brand names, app feels polished, dev-first identity is visible.
 
-- [ ] Modes: Auto / Email / Slack / Code / Raw
-   - Auto picks based on frontmost app (Mail.app → Email, VS Code/Cursor → Code, Slack → Slack)
+- [ ] Modes: Auto / Email / Slack / Code / Raw (Code already shipped in Sprint 1; Sprint 2 adds Email / Slack / Raw)
+   - Auto picks based on frontmost app (Mail.app → Email, VS Code/Cursor → Code, Slack → Slack, default → Raw cleanup)
 - [ ] Mode-specific cleanup prompts
-- [ ] Code mode: handles spoken symbols ("camelCase", "snake_case", "open paren", "equals", "arrow", "open curly", etc.)
 - [ ] Custom dictionary: user-added terms boost during cleanup ("Spontent", "ClickFunnels", etc.)
 - [ ] Transcription history view (local SQLite)
 - [ ] Cmd+Shift+V to re-paste last transcription
 - [ ] Cmd+Shift+H to toggle history window
 - [ ] Per-mode tone tuning sliders (formal ↔ casual)
-- [ ] Polished onboarding: 30-second walkthrough on first launch
-- [ ] Local Whisper fallback toggle (whisper.cpp + tiny.en model bundled)
+- [ ] Polished onboarding: 30-second walkthrough on first launch — leans punk/fun brand
+- [ ] **Bundled local LLM (upgrade from MVP toggle):** ship a quantized GGUF model (`qwen2.5:1.5b` Q4_K_M, ~1GB) inside the .app, with embedded llama.cpp runtime. User no longer needs Ollama installed for local mode. "No API key. Ever." becomes literally true post-install.
+- [ ] Local Whisper fallback toggle (whisper.cpp + small.en model bundled)
+- [ ] Per-language code profiles (Python: `def`/`self`; JS/TS: `const`/`=>`; Rust: `let`/`mut`; etc.)
 
 ### Sprint 3 — Ship (Mon AM)
 **Acceptance:** Signed (or unsigned with bypass instructions), packaged .dmg/.app, GitHub release, landing page live, demo video, Todd actually using it.

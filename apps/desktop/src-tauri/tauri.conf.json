@@ -1,0 +1,71 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "FunButton",
+  "version": "0.1.0",
+  "identifier": "ai.funbutton.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "settings",
+        "title": "FunButton — Settings",
+        "url": "index.html",
+        "width": 540,
+        "height": 680,
+        "resizable": false,
+        "minimizable": true,
+        "maximizable": false,
+        "fullscreen": false,
+        "transparent": false,
+        "decorations": true,
+        "visible": false,
+        "center": true
+      },
+      {
+        "label": "pill",
+        "title": "FunButton",
+        "url": "pill.html",
+        "width": 220,
+        "height": 64,
+        "resizable": false,
+        "minimizable": false,
+        "maximizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "focus": false,
+        "visible": false,
+        "x": 100,
+        "y": 60
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "category": "Productivity",
+    "shortDescription": "Talk fast. Stay local. Pay less.",
+    "longDescription": "FunButton.ai — a local-first, code-aware voice dictation tool. Press the fun button, speak, and your cleaned-up text appears at your cursor. No cloud lock-in, no API key required.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    }
+  }
+}
