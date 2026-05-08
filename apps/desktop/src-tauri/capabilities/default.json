@@ -12,6 +12,7 @@
     "opener:default",
     "store:default",
     "clipboard-manager:default",
-    "autostart:default"
+    "autostart:default",
+    "global-shortcut:default"
   ]
 }

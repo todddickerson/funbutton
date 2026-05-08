@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
 type Backend = "auto" | "groq" | "local";
+type ModeOverride = "auto" | "code" | "email" | "slack" | "raw";
 
 interface Settings {
   groq_api_key: string;
@@ -13,6 +14,8 @@ interface Settings {
   words_today: number;
   words_today_date: string;
   hotkey_label: string;
+  mode_override: ModeOverride;
+  dictionary: string[];
 }
 
 interface ResultPayload {
@@ -87,7 +90,23 @@ function App() {
           <div className="fb-section">
             <label className="fb-label">Hotkey</label>
             <div className="fb-readonly">{settings.hotkey_label}</div>
-            <div className="fb-hint">Push-to-talk. Hold to record, release to transcribe.</div>
+            <div className="fb-hint">Hold Right Option to dictate. <kbd>⌘⇧V</kbd> re-pastes the last cleaned text.</div>
+          </div>
+
+          <div className="fb-section">
+            <label className="fb-label">Mode</label>
+            <div className="fb-radios">
+              {(["auto","code","email","slack","raw"] as const).map(m => (
+                <button
+                  key={m}
+                  className={`fb-pill ${settings.mode_override === m ? "on" : ""}`}
+                  onClick={() => update("mode_override", m)}
+                >{m}</button>
+              ))}
+            </div>
+            <div className="fb-hint">
+              <strong>auto</strong> picks based on the frontmost app (Cursor / VS Code / Mail / Slack → matching prompt). Override to force a mode.
+            </div>
           </div>
 
           <div className="fb-section">
@@ -134,6 +153,20 @@ function App() {
             />
             <div className="fb-hint">
               Recommended: <code>qwen2.5:1.5b</code>. Run <code>ollama pull qwen2.5:1.5b</code> once.
+            </div>
+          </div>
+
+          <div className="fb-section">
+            <label className="fb-label">Dictionary</label>
+            <textarea
+              className="fb-input fb-textarea"
+              rows={3}
+              value={settings.dictionary.join("\n")}
+              onChange={(e) => update("dictionary", e.target.value.split("\n").map(s => s.trim()).filter(Boolean))}
+              placeholder="One name or term per line. e.g.&#10;ClickFunnels&#10;Spontent&#10;Russell"
+            />
+            <div className="fb-hint">
+              Brand names, jargon, project names. Cleanup will preserve these spellings even if Whisper hears them slightly off.
             </div>
           </div>
 

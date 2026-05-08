@@ -16,6 +16,22 @@ impl Default for Backend {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ModeOverride {
+    Auto,
+    Code,
+    Email,
+    Slack,
+    Raw,
+}
+
+impl Default for ModeOverride {
+    fn default() -> Self {
+        ModeOverride::Auto
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
@@ -32,12 +48,16 @@ pub struct Settings {
     pub words_today_date: String,
     #[serde(default = "default_hotkey_label")]
     pub hotkey_label: String,
+    #[serde(default)]
+    pub mode_override: ModeOverride,
+    #[serde(default)]
+    pub dictionary: Vec<String>,
 }
 
 fn default_ollama_model() -> String { "qwen2.5:1.5b".to_string() }
 fn default_ollama_url() -> String { "http://localhost:11434".to_string() }
 fn default_words_today() -> u64 { 0 }
-fn default_hotkey_label() -> String { "Right Option (hold)".to_string() }
+fn default_hotkey_label() -> String { "Right Option (hold) · Cmd+Shift+V re-paste".to_string() }
 
 impl Default for Settings {
     fn default() -> Self {
@@ -49,6 +69,8 @@ impl Default for Settings {
             words_today: 0,
             words_today_date: String::new(),
             hotkey_label: default_hotkey_label(),
+            mode_override: ModeOverride::default(),
+            dictionary: Vec::new(),
         }
     }
 }
@@ -81,6 +103,7 @@ pub struct AppState {
     pub settings: Mutex<Settings>,
     pub status: Mutex<Status>,
     pub last_transcript: Mutex<String>,
+    pub last_cleaned: Mutex<String>,
 }
 
 pub type AppStateHandle = Arc<AppState>;
@@ -91,6 +114,7 @@ impl AppState {
             settings: Mutex::new(settings),
             status: Mutex::new(Status::Idle),
             last_transcript: Mutex::new(String::new()),
+            last_cleaned: Mutex::new(String::new()),
         })
     }
 }

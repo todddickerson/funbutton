@@ -141,6 +141,7 @@ pub fn run() {
     let app_state_clone = Arc::clone(&app_state);
     let recorder_clone = Arc::clone(&recorder);
 
+    let state_for_shortcut = Arc::clone(&app_state);
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -150,6 +151,24 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(move |_app, _shortcut, event| {
+                    use tauri_plugin_global_shortcut::ShortcutState;
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    let last = state_for_shortcut.last_cleaned.lock().clone();
+                    if !last.is_empty() {
+                        std::thread::spawn(move || {
+                            if let Err(e) = inject::paste_text(&last) {
+                                log::error!("re-paste failed: {e:#}");
+                            }
+                        });
+                    }
+                })
+                .build(),
+        )
         .manage(Arc::clone(&app_state))
         .invoke_handler(tauri::generate_handler![
             get_settings,
@@ -166,6 +185,18 @@ pub fn run() {
             }
             if let Some(w) = app.get_webview_window("pill") {
                 let _ = w.hide();
+            }
+
+            // Register Cmd+Shift+V re-paste shortcut.
+            {
+                use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
+                let shortcut = Shortcut::new(
+                    Some(Modifiers::SUPER | Modifiers::SHIFT),
+                    Code::KeyV,
+                );
+                if let Err(e) = app.global_shortcut().register(shortcut) {
+                    log::warn!("Cmd+Shift+V registration failed (likely conflict): {e:#}");
+                }
             }
 
             // System tray
@@ -288,6 +319,7 @@ fn handle_hotkey_loop(
                             *state_h.status.lock() = Status::Pasting;
                             emit_status(&app_h, Status::Pasting, None);
                             let to_paste = r.cleaned.clone();
+                            *state_h.last_cleaned.lock() = to_paste.clone();
                             let words = to_paste.split_whitespace().count();
                             // bump words_today
                             {
