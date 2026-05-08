@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-05-08 17:50 — Landing page live at funbutton.vercel.app
+
+**Done:**
+- Deployed `apps/web` to Vercel via `bootstrapped-cf259a39` team.
+- **Live:** https://funbutton.vercel.app — punk hero, code-mode demos, vs-Wispr table, pricing tiers.
+- HTTP 200, 1.3s build, all 4 routes prerender static.
+
+**Domain hookup deferred:** `funbutton.ai` not yet wired through Spaceship → Vercel. If Todd already owns the domain, run `vercel domains add funbutton.ai` against the `bootstrapped-cf259a39` team to link. If not, register first, then alias.
+
+**Tried Telegram update via openclaw:** `directory groups list --channel telegram` returns "No groups found" — the FunButton group hasn't been seen by the bot yet. Updates will land here in PROGRESS.md and on the GH release until that's fixed.
+
+---
+
 ## 2026-05-08 17:40 — Sprint 1 MVP shipped: v0.1.0-alpha released
 
 **Done:**
