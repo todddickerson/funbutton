@@ -4,6 +4,78 @@
 
 ---
 
+## 2026-05-08 19:50 — Sprint 2.5: transcription archive + paste-failure recovery
+
+**Done — the safety net is in.**
+
+- **`history.rs` — SQLite archive at `~/.funbutton/history.db`.**
+  - Schema: `id, ts, raw_transcript, cleaned_text, mode_used, frontmost_app, paste_succeeded, audio_duration_ms, model_used`.
+  - rusqlite `bundled` feature so SQLite is statically linked; no system dep.
+  - `insert_pre_paste()` runs after cleanup completes but **before** the keystroke goes out — even if paste blows up, the row is saved.
+  - `mark_paste_result(id, success)` updates the flag once paste returns.
+  - `purge_older_than(days)` enforces retention; runs on launch and on every save.
+  - All operations local. Nothing leaves the machine.
+
+- **Paste-failure recovery (`inject::PasteOutcome`).**
+  - `paste_text()` now returns `PasteOutcome::Pasted` or `PasteOutcome::Failed(reason)` instead of bubbling errors.
+  - On `Failed`: cleaned text stays on the clipboard (no prior-clipboard restore), `mark_paste_result(id, false)` is recorded, a macOS native notification fires via `tauri-plugin-notification` ("FunButton — paste blocked. Cleaned text on clipboard. ⌘V to paste manually, or open History to copy it."), and the frontend gets a `funbutton:paste-failed` event so the banner refreshes.
+  - On `Pasted`: prior clipboard restored 900 ms later as before.
+
+- **Settings UI restructured into Tabs (Settings / History).**
+  - History tab: scrollable list (200 entries), per-row meta strip (timestamp / mode / frontmost app / duration / paste-failed flag), `<details>` reveal for raw transcript when it differs from cleaned, copy-to-clipboard button per row.
+  - Search input filters by substring across raw + cleaned.
+  - Mode dropdown filters by mode.
+  - **Top-of-history banner if the most recent entry has `paste_succeeded=false`** — quotes the cleaned text and gives a one-click "copy to clipboard" recovery path.
+  - **History retention setting** (Settings tab): pills for 7d / 30d / 90d / never. Default 30 days. Purge runs on save and on launch.
+  - Stats row shows today's word count + last cleanup metadata.
+
+- **Cmd+Shift+H global shortcut → opens settings on History tab.**
+  - Same plugin handler as Cmd+Shift+V; dispatches via `Code::KeyV` vs `Code::KeyH`.
+  - Emits `funbutton:open-history` so the React side switches tab.
+
+- **Tauri commands added:** `history_list(limit, search, mode)`, `history_copy(id)`, `history_purge_now()`, `history_last_failed()`. Wired into the Settings UI.
+
+- **AppState gains `history: Arc<History>`** so all the async tasks share one connection (Mutex-wrapped).
+
+- **API key:** untouched. `Settings::default()` already pulls from `GROQ_API_KEY` env at first launch; rotated key in `~/clawd/.env` (suffix PwBHfhT6) is picked up automatically when running via `npm run tauri dev`. Shipped `.app` users paste their key in Settings. No hardcoded key anywhere.
+
+- New release Tauri build with the archive in flight; will repackage `.dmg` + `.zip` and clobber `v0.1.0-alpha`.
+
+**Stop point per Todd's directive.** Sprint 2.6 (snippets / smart-dictionary / per-user learning loop / command mode) will read the QUALITY-MATCH-SPEC.md research output before starting Saturday post-rate-limit-reset. Not building further tonight.
+
+**Live URLs:** https://funbutton.ai · https://funbutton.ai/showdown · https://github.com/todddickerson/funbutton/releases/tag/v0.1.0-alpha
+
+**Blocked:** none.
+
+---
+
+## 2026-05-08 19:15 — Wargame round shipped: warm HTTP/2, /showdown, Qwen-skip lock
+
+**Done:**
+- **Warm HTTP/2 to Groq.** `groq.rs` now uses a process-wide `once_cell::Lazy<reqwest::Client>` with HTTP/2 (via ALPN, not h2c prior knowledge), keep-alive every 30s, idle-pool retention 120s, TCP keepalive 30s. `groq::prewarm()` pings `GET /v1/models` once on app startup so the first real utterance pays no TLS handshake. Subsequent calls reuse the warm pool. Estimated savings: ~150-200ms per call after the first, ~150-200ms on the first call vs cold connect. Sub-1.2 s perceived latency target should be comfortable.
+- **Skipped chunked-during-capture intentionally.** Groq Whisper isn't a streaming endpoint — chunked-and-stitched would cost 4× per dictation, hurt accuracy at boundaries, and only save ~200-400ms on long utterances. Warm HTTP/2 covers ~80% of the latency win at zero risk. Documented this trade-off here so we don't redo it.
+- **Bundled Qwen — DECISION LOCKED: SKIP.** README now leads with the one-liner `brew install ollama && ollama pull qwen2.5:1.5b — FunButton finds it automatically`. PRD Sprint 2 row updated, decision marked locked. The 5 MB unsigned bundle is the actual differentiator vs Wispr's 800 MB Electron tax — bundling a 1 GB GGUF would be 200× bloat for the 80 % of users pasting a Groq key. Revisit only if Ollama detection fails for >10 % of testers.
+- **/showdown page LIVE at https://funbutton.ai/showdown.** Five real captured scenarios:
+  - **Rambling email** → "Hi um Russell I wanted to like you know follow up…" → cleaned email body, no greeting/sign-off, "30k might be a more suitable price point"
+  - **Slack mid-sentence correction** → "ship by EOD wait actually no make it tomorrow morning…" → `so just ship that pr tomorrow morning, the build's broken in ci right now anyway 👍`
+  - **Arrow fn with spoken symbols** → `(userData, options) => Object.keys(userData).filter(k => !k.startsWith('_'))`
+  - **snake_case fn signature** → `fetchUserProfile(userId: number): Promise<User>`
+  - **Mid-sentence redirect** → "draft a response actually no scratch that I'll handle it tomorrow…" → "I'll handle the refund situation tomorrow morning when I have my notes in front of me." This is THE wedge demo.
+  - All captured live via `scripts/capture_showdown.sh`. Anyone can re-run.
+- **CSS-animated hero demo on the home page.** Window chrome, recording pill cycles through idle → recording (red, pulsing dot) → transcribing (orange) → cleaning (purple) → pasting (green) → idle, fake editor types out the arrow function in sync. Pure CSS, no GIF, scales crisp on retina, ~0 KB extra payload.
+- New release Tauri build with warm HTTP/2 in flight. Will repackage `.dmg` + `.zip` and clobber `v0.1.0-alpha` artifacts on completion.
+
+**Stop point.** This is everything Todd asked for in the wargame round. Not over-building. Sprint 3 polish (auto-updater, demo recording from real install, hotkey remap UI) waits until Todd has hands-on Monday feedback.
+
+**Live URLs:**
+- Home: https://funbutton.ai
+- Showdown: https://funbutton.ai/showdown
+- Release: https://github.com/todddickerson/funbutton/releases/tag/v0.1.0-alpha
+
+**Blocked:** none.
+
+---
+
 ## 2026-05-08 18:30 — First-run UX + funbutton.ai HTTPS live + test script
 
 **Done:**

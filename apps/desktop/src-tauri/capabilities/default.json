@@ -13,6 +13,7 @@
     "store:default",
     "clipboard-manager:default",
     "autostart:default",
-    "global-shortcut:default"
+    "global-shortcut:default",
+    "notification:default"
   ]
 }

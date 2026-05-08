@@ -1,3 +1,4 @@
+use crate::history::History;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -52,7 +53,11 @@ pub struct Settings {
     pub mode_override: ModeOverride,
     #[serde(default)]
     pub dictionary: Vec<String>,
+    #[serde(default = "default_retention_days")]
+    pub history_retention_days: u32,
 }
+
+fn default_retention_days() -> u32 { 30 }
 
 fn default_ollama_model() -> String { "qwen2.5:1.5b".to_string() }
 fn default_ollama_url() -> String { "http://localhost:11434".to_string() }
@@ -71,6 +76,7 @@ impl Default for Settings {
             hotkey_label: default_hotkey_label(),
             mode_override: ModeOverride::default(),
             dictionary: Vec::new(),
+            history_retention_days: default_retention_days(),
         }
     }
 }
@@ -104,17 +110,19 @@ pub struct AppState {
     pub status: Mutex<Status>,
     pub last_transcript: Mutex<String>,
     pub last_cleaned: Mutex<String>,
+    pub history: Arc<History>,
 }
 
 pub type AppStateHandle = Arc<AppState>;
 
 impl AppState {
-    pub fn new(settings: Settings) -> AppStateHandle {
+    pub fn new(settings: Settings, history: Arc<History>) -> AppStateHandle {
         Arc::new(AppState {
             settings: Mutex::new(settings),
             status: Mutex::new(Status::Idle),
             last_transcript: Mutex::new(String::new()),
             last_cleaned: Mutex::new(String::new()),
+            history,
         })
     }
 }

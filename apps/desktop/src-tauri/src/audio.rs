@@ -109,6 +109,14 @@ impl Recorder {
     pub fn sample_count(&self) -> usize {
         self.inner.samples.lock().len()
     }
+
+    pub fn duration_ms(&self) -> u64 {
+        let samples = self.inner.samples.lock().len();
+        let sr = *self.inner.sample_rate.lock() as u64;
+        let ch = *self.inner.channels.lock() as u64;
+        if sr == 0 || ch == 0 { return 0; }
+        (samples as u64) * 1000 / (sr * ch)
+    }
 }
 
 /// Encode interleaved f32 samples as 16-bit PCM mono WAV.

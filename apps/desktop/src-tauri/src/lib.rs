@@ -2,6 +2,7 @@ mod app_detect;
 mod audio;
 mod cleanup;
 mod groq;
+mod history;
 mod hotkey;
 mod inject;
 mod ollama;
@@ -76,6 +77,48 @@ async fn ollama_check(state: tauri::State<'_, AppStateHandle>) -> Result<bool, S
 }
 
 #[tauri::command]
+fn history_list(
+    state: tauri::State<'_, AppStateHandle>,
+    limit: Option<i64>,
+    search: Option<String>,
+    mode: Option<String>,
+) -> Result<Vec<history::HistoryEntry>, String> {
+    state
+        .history
+        .list(limit.unwrap_or(200), search.as_deref(), mode.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn history_copy(
+    state: tauri::State<'_, AppStateHandle>,
+    id: i64,
+) -> Result<(), String> {
+    let entries = state
+        .history
+        .list(1000, None, None)
+        .map_err(|e| e.to_string())?;
+    let entry = entries
+        .into_iter()
+        .find(|e| e.id == id)
+        .ok_or_else(|| format!("history id {} not found", id))?;
+    inject::set_clipboard(&entry.cleaned_text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn history_purge_now(state: tauri::State<'_, AppStateHandle>) -> Result<u64, String> {
+    let days = state.settings.lock().history_retention_days;
+    state.history.purge_older_than(days).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn history_last_failed(
+    state: tauri::State<'_, AppStateHandle>,
+) -> Result<Option<history::HistoryEntry>, String> {
+    state.history.last_failed().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn open_settings(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("settings") {
         let _ = win.show();
@@ -130,7 +173,24 @@ pub fn run() {
 
     let first_run = !settings_path().exists();
     let initial = load_settings();
-    let app_state: AppStateHandle = AppState::new(initial);
+    let history_db_path = {
+        let mut p = dirs_home();
+        p.push(".funbutton");
+        p.push("history.db");
+        p
+    };
+    let history_arc = match history::History::open(history_db_path) {
+        Ok(h) => Arc::new(h),
+        Err(e) => {
+            log::error!("history db unavailable: {e:#}");
+            // Fall back to an in-memory db so the rest of the app keeps running.
+            Arc::new(history::History::open(std::path::PathBuf::from(":memory:"))
+                .expect("in-memory sqlite"))
+        }
+    };
+    // Apply retention purge on startup.
+    let _ = history_arc.purge_older_than(initial.history_retention_days);
+    let app_state: AppStateHandle = AppState::new(initial, Arc::clone(&history_arc));
 
     // Hotkey channel
     let (tx, rx) = mpsc::channel::<HotkeyEvent>();
@@ -148,24 +208,35 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(move |_app, _shortcut, event| {
-                    use tauri_plugin_global_shortcut::ShortcutState;
+                .with_handler(move |app, shortcut, event| {
+                    use tauri_plugin_global_shortcut::{Code, ShortcutState};
                     if event.state() != ShortcutState::Pressed {
                         return;
                     }
-                    let last = state_for_shortcut.last_cleaned.lock().clone();
-                    if !last.is_empty() {
-                        std::thread::spawn(move || {
-                            if let Err(e) = inject::paste_text(&last) {
-                                log::error!("re-paste failed: {e:#}");
+                    match shortcut.key {
+                        Code::KeyV => {
+                            let last = state_for_shortcut.last_cleaned.lock().clone();
+                            if !last.is_empty() {
+                                std::thread::spawn(move || {
+                                    let _ = inject::paste_text(&last);
+                                });
                             }
-                        });
+                        }
+                        Code::KeyH => {
+                            if let Some(w) = app.get_webview_window("settings") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                            let _ = app.emit("funbutton:open-history", ());
+                        }
+                        _ => {}
                     }
                 })
                 .build(),
@@ -178,6 +249,10 @@ pub fn run() {
             get_last_transcript,
             ollama_check,
             open_settings,
+            history_list,
+            history_copy,
+            history_purge_now,
+            history_last_failed,
         ])
         .setup(move |app| {
             // Menu bar app — hide pill always, show settings only on first run.
@@ -193,15 +268,17 @@ pub fn run() {
                 }
             }
 
-            // Register Cmd+Shift+V re-paste shortcut.
+            // Register global shortcuts: Cmd+Shift+V (re-paste) and Cmd+Shift+H (open history).
             {
                 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
-                let shortcut = Shortcut::new(
-                    Some(Modifiers::SUPER | Modifiers::SHIFT),
-                    Code::KeyV,
-                );
-                if let Err(e) = app.global_shortcut().register(shortcut) {
-                    log::warn!("Cmd+Shift+V registration failed (likely conflict): {e:#}");
+                let mods = Some(Modifiers::SUPER | Modifiers::SHIFT);
+                let v_shortcut = Shortcut::new(mods, Code::KeyV);
+                let h_shortcut = Shortcut::new(mods, Code::KeyH);
+                if let Err(e) = app.global_shortcut().register(v_shortcut) {
+                    log::warn!("Cmd+Shift+V registration failed: {e:#}");
+                }
+                if let Err(e) = app.global_shortcut().register(h_shortcut) {
+                    log::warn!("Cmd+Shift+H registration failed: {e:#}");
                 }
             }
 
@@ -294,7 +371,7 @@ fn handle_hotkey_loop(
                 }
             }
             HotkeyEvent::Up => {
-                let wav = {
+                let (wav, audio_duration_ms) = {
                     let mut rec = recorder.lock();
                     if rec.sample_count() < 4_000 {
                         // Less than ~50ms at 48kHz stereo — likely an accidental tap.
@@ -307,7 +384,8 @@ fn handle_hotkey_loop(
                         emit_status(&app, Status::Idle, Some("too short".into()));
                         continue;
                     }
-                    match rec.stop_and_encode_wav() {
+                    let dur = rec.duration_ms() as i64;
+                    let bytes = match rec.stop_and_encode_wav() {
                         Ok(b) => b,
                         Err(e) => {
                             log::error!("recorder stop failed: {e:#}");
@@ -315,7 +393,8 @@ fn handle_hotkey_loop(
                             emit_status(&app, Status::Error, Some(format!("encode: {e}")));
                             continue;
                         }
-                    }
+                    };
+                    (bytes, dur)
                 };
 
                 let app_h = app.clone();
@@ -334,6 +413,29 @@ fn handle_hotkey_loop(
                             let to_paste = r.cleaned.clone();
                             *state_h.last_cleaned.lock() = to_paste.clone();
                             let words = to_paste.split_whitespace().count();
+
+                            // Insert history row BEFORE paste, so even if paste fails the
+                            // cleaned text is preserved.
+                            let frontmost = crate::app_detect::FrontApp::detect().label();
+                            let model_used = match r.backend_used {
+                                "local" => format!("ollama-{}", state_h.settings.lock().ollama_model),
+                                _ => format!("groq-{}", crate::groq::LLAMA_MODEL),
+                            };
+                            let history_id = match state_h.history.insert_pre_paste(
+                                &r.raw,
+                                &r.cleaned,
+                                r.mode,
+                                Some(&frontmost),
+                                Some(audio_duration_ms),
+                                &model_used,
+                            ) {
+                                Ok(id) => Some(id),
+                                Err(e) => {
+                                    log::error!("history insert failed: {e:#}");
+                                    None
+                                }
+                            };
+
                             // bump words_today
                             {
                                 let today = chrono_today();
@@ -345,13 +447,33 @@ fn handle_hotkey_loop(
                                 s.words_today += words as u64;
                                 let _ = persist(&s);
                             }
-                            // Inject on a non-async thread.
-                            let to_paste_owned = to_paste.clone();
+
+                            // Inject on a non-async thread, capture the outcome,
+                            // then update history + notify on failure.
+                            let app_inject = app_h.clone();
+                            let state_inject = Arc::clone(&state_h);
+                            let cleaned_for_paste = to_paste.clone();
+                            let history_id_paste = history_id;
                             std::thread::spawn(move || {
-                                if let Err(e) = inject::paste_text(&to_paste_owned) {
-                                    log::error!("paste failed: {e:#}");
+                                use inject::PasteOutcome;
+                                let outcome = inject::paste_text(&cleaned_for_paste);
+                                let success = matches!(outcome, PasteOutcome::Pasted);
+                                if let Some(id) = history_id_paste {
+                                    let _ = state_inject.history.mark_paste_result(id, success);
+                                }
+                                if let PasteOutcome::Failed(reason) = outcome {
+                                    log::warn!("paste failed: {reason}");
+                                    use tauri_plugin_notification::NotificationExt;
+                                    let _ = app_inject
+                                        .notification()
+                                        .builder()
+                                        .title("FunButton — paste blocked")
+                                        .body("Cleaned text is on your clipboard. Press ⌘V to paste manually, or open History to copy it.")
+                                        .show();
+                                    let _ = app_inject.emit("funbutton:paste-failed", ());
                                 }
                             });
+
                             let _ = app_h.emit(
                                 "funbutton:result",
                                 PipelinePayload {

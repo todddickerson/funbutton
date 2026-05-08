@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0a0a0a;
+  --foreground: #ededed;
 }
 
 @theme inline {
@@ -12,109 +12,35 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
-body {
+html, body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Hero demo animation — fakes the press → record → cleanup → paste loop */
-@keyframes fb-pill-cycle {
-  /* idle */
-  0%, 4% {
-    background: rgba(60, 60, 60, 0.92);
-    color: #fff;
-  }
-  /* recording */
-  6%, 30% {
-    background: rgba(255, 51, 102, 0.94);
-    color: #fff;
-  }
-  /* transcribing */
-  32%, 46% {
-    background: rgba(255, 165, 0, 0.94);
-    color: #1a1a1a;
-  }
-  /* cleaning */
-  48%, 62% {
-    background: rgba(120, 100, 255, 0.94);
-    color: #fff;
-  }
-  /* pasting */
-  64%, 76% {
-    background: rgba(34, 197, 94, 0.94);
-    color: #fff;
-  }
-  /* idle hold */
-  78%, 100% {
-    background: rgba(60, 60, 60, 0.92);
-    color: #fff;
-  }
+/* Pixelated red round button glyph */
+@keyframes fb-btn-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6), inset 0 -3px 0 rgba(0,0,0,0.35); }
+  50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0), inset 0 -3px 0 rgba(0,0,0,0.35); }
 }
-@keyframes fb-pill-text {
-  0%, 4% { content: "● idle"; }
-  6%, 30% { content: "● recording"; }
-  32%, 46% { content: "◐ transcribing"; }
-  48%, 62% { content: "◑ cleaning"; }
-  64%, 76% { content: "✎ pasting"; }
-  78%, 100% { content: "● idle"; }
-}
-@keyframes fb-pill-pulse {
-  0%, 5% { opacity: 1; transform: scale(1); }
-  6%, 30% { opacity: 1; animation-timing-function: ease-in-out; }
-  10%, 22% { opacity: 0.4; transform: scale(1.4); }
-  32%, 100% { opacity: 1; transform: scale(1); }
-}
-@keyframes fb-typing {
-  0%, 64% { clip-path: inset(0 100% 0 0); opacity: 0; }
-  68% { clip-path: inset(0 90% 0 0); opacity: 1; }
-  73% { clip-path: inset(0 50% 0 0); }
-  78% { clip-path: inset(0 0 0 0); }
-  100% { clip-path: inset(0 0 0 0); opacity: 1; }
-}
-@keyframes fb-cursor-blink {
-  0%, 65% { opacity: 0; }
-  66%, 79% { opacity: 1; }
-  80%, 82% { opacity: 0; }
-  84%, 100% { opacity: 1; }
-}
-
-.fb-pill-demo {
-  animation: fb-pill-cycle 8s infinite;
-}
-.fb-pill-dot {
-  width: 8px;
-  height: 8px;
+.fb-glyph {
+  width: 22px;
+  height: 22px;
   border-radius: 9999px;
-  background: currentColor;
-  animation: fb-pill-pulse 8s infinite;
+  background: #ef4444;
+  background-image:
+    radial-gradient(circle at 30% 30%, #fca5a5 0%, #ef4444 35%, #b91c1c 100%);
   display: inline-block;
+  image-rendering: pixelated;
+  animation: fb-btn-pulse 2.4s ease-in-out infinite;
+  box-shadow: inset 0 -3px 0 rgba(0,0,0,0.35);
 }
-.fb-pill-text::before {
-  content: "● idle";
-  animation: fb-pill-text 8s infinite;
-}
-.fb-pill-text {
-  /* hide the actual JSX text — animation supplies it via ::before */
-  font-size: 0;
-}
-.fb-pill-text::before {
-  font-size: 12px;
-}
-.fb-typing {
-  display: block;
-  animation: fb-typing 8s infinite;
-}
-.fb-cursor {
-  display: inline-block;
-  color: #ec4899;
-  animation: fb-cursor-blink 8s infinite;
-  font-weight: bold;
+
+/* Subtle grid backdrop */
+.fb-grid {
+  background-image:
+    linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
 }
