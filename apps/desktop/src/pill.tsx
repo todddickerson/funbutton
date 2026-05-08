@@ -21,10 +21,17 @@ function Pill() {
     status === "cleaning" ? "◑ cleaning" :
     status === "pasting" ? "✎ pasting" :
     status === "error" ? "⚠ error" : "● idle";
+  const sub =
+    status === "recording" ? "release Fn to send" :
+    status === "transcribing" ? "whisper turbo" :
+    status === "cleaning" ? "llama 3.3" :
+    status === "pasting" ? "" :
+    status === "error" ? "tap Fn again" : "";
 
   return (
     <div className={`pill pill-${status}`}>
       <span className="pill-label">{label}</span>
+      {sub && !msg && <span className="pill-sub">{sub}</span>}
       {msg && <span className="pill-msg">{msg}</span>}
     </div>
   );

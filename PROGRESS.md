@@ -4,6 +4,44 @@
 
 ---
 
+## 2026-05-08 23:10 — BRAND PILLAR LOCKED: Fn key is the Fun Button
+
+**The wedge is the name.** FunButton = Fn (Function) Button — the dead key at the bottom-left of every Mac keyboard. We just gave it a job. Locked into PRD as a design pillar, not a feature.
+
+**Done:**
+- **`fn_hotkey.rs` — CGEventTap-based Fn detection in pure Rust.**
+  - `core-graphics` 0.25 + `core-foundation` 0.10 (macOS-only via `[target.'cfg(target_os = "macos")'.dependencies]`).
+  - `CGEventTap::with_enabled` in HID location, listen-only, on `FlagsChanged`. Callback inspects `CGEventFlags::CGEventFlagSecondaryFn` (0x00800000 — the same bit Karabiner-Elements / Hyperkey / Raycast Hotkey watch).
+  - Edge-detected via `AtomicBool::swap` so we send Down on press and Up on release exactly once. Sender shared with the same `mpsc` channel the rdev path used — `lib.rs` consumer is unchanged.
+  - Runloop runs on a dedicated thread via `CFRunLoop::run_current()` inside `with_enabled`'s closure.
+  - First-run permission prompt: macOS asks for **Input Monitoring** (separate from Accessibility — both prompted now). If denied, tap creation succeeds but no events arrive; we log a clear diagnostic pointing at System Settings → Privacy & Security → Input Monitoring.
+
+- **`HotkeyKind` enum** in Settings: `Fn` (default) | `RightOption` (fallback). Persisted in `~/.funbutton/settings.json`. Default for new installs is `Fn`. Right Option remains a one-click setting toggle for users who already mapped Fn (Karabiner / Hyperkey crowd). Switching takes effect on next launch.
+
+- **`Info.plist`:** added `NSInputMonitoringUsageDescription` so macOS shows our reason on the prompt: "FunButton needs Input Monitoring to detect when you hold the Fun Button (Fn key) for push-to-talk dictation. … Required for the default hotkey; the alternate Right Option hotkey only needs Accessibility."
+
+- **Brand copy across the app:**
+  - Settings → Hotkey section: visual Mac key glyph with `fn` / `FUN` label that pulses red when active. Caption: "that key, bottom-left of your keyboard. nobody used it. we just gave it a job."
+  - Welcome banner rewritten: leads with "FunButton = Fn Button. The key at the bottom-left corner of your Mac keyboard. You probably never used it. We just gave it a job." Walks through Mic / Accessibility / Input Monitoring grants explicitly.
+  - Tray tooltip: "FunButton — hold Fn to dictate · ⌘⇧V re-paste · ⌘⇧H history".
+  - Recording pill subtitle: "release Fn to send" while recording, "whisper turbo" while transcribing, "llama 3.3" while cleaning.
+
+- **PRD.md:** new top-section "Brand Pillar — locked" calling out Fn detection as the design wedge. North Star rewritten in Fn terms. Sprint 1 acceptance unchanged structurally; the hotkey is just Fn now.
+
+- New release Tauri build with `fn_hotkey` + brand copy in flight; will repackage `.dmg` + `.zip` and clobber `v0.1.0-alpha`.
+
+**Known caveats (Todd should test on the Mac Studio):**
+- First launch will prompt for **three** permissions: Microphone, Accessibility, Input Monitoring. All three needed for the default Fn hotkey. The alternate Right Option path skips Input Monitoring.
+- Some keyboards (esp. external non-Apple) don't generate the `kCGEventFlagMaskSecondaryFn` bit at all — Fn handling is firmware-level. If Fn doesn't fire, the settings UI lets the user switch to Right Option. Saturday work: detect "no Fn events received in N seconds after install" and surface a one-click switch.
+- Sprint 2.6 will add a real onboarding wizard with the keyboard SVG + permission stepper. The Settings welcome banner is the v1 of that.
+
+**Live URL:** https://funbutton.ai (coming-soon)
+**Release:** https://github.com/todddickerson/funbutton/releases/tag/v0.1.0-alpha (pending repackage)
+
+**Blocked:** none.
+
+---
+
 ## 2026-05-08 22:35 — Coming-soon landing live + Resend audience capture
 
 **Done:**

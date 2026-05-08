@@ -6,6 +6,8 @@
     <string>FunButton uses your microphone to transcribe what you say into text. Audio is sent only to your configured cleanup backend (Groq Whisper by default, or local Ollama if enabled).</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>FunButton uses Apple Events to detect the frontmost app for context-aware code mode and to paste cleaned text via Cmd+V.</string>
+    <key>NSInputMonitoringUsageDescription</key>
+    <string>FunButton needs Input Monitoring to detect when you hold the Fun Button (Fn key) for push-to-talk dictation. Granted via System Settings → Privacy &amp; Security → Input Monitoring. Required for the default hotkey; the alternate Right Option hotkey only needs Accessibility.</string>
     <key>LSUIElement</key>
     <true/>
     <key>LSApplicationCategoryType</key>

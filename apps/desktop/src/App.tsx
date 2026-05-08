@@ -5,6 +5,7 @@ import "./App.css";
 
 type Backend = "auto" | "groq" | "local";
 type ModeOverride = "auto" | "code" | "email" | "slack" | "raw";
+type HotkeyKind = "fn" | "right_option";
 
 interface Settings {
   groq_api_key: string;
@@ -14,6 +15,7 @@ interface Settings {
   words_today: number;
   words_today_date: string;
   hotkey_label: string;
+  hotkey_kind: HotkeyKind;
   mode_override: ModeOverride;
   dictionary: string[];
   history_retention_days: number;
@@ -178,20 +180,46 @@ function App() {
         <div className="fb-form">
           {settings.groq_api_key.trim() === "" && ollamaUp === false && (
             <div className="fb-welcome">
-              <div className="fb-welcome-title">welcome.</div>
+              <div className="fb-welcome-title">welcome — meet the Fun Button.</div>
               <div className="fb-welcome-body">
-                Pick one to get started:<br/>
-                <strong>1.</strong> paste a Groq API key below (free at console.groq.com/keys), <strong>or</strong><br/>
-                <strong>2.</strong> install Ollama and run <code>ollama pull qwen2.5:1.5b</code> for full local mode.<br/><br/>
-                Then close this window. Hold <kbd>Right Option</kbd> in any text field, talk, release.
-                If macOS asks for Microphone or Accessibility, grant both.
+                <strong>FunButton = Fn Button.</strong> The key at the bottom-left corner of your Mac keyboard.
+                You probably never used it. We just gave it a job.<br/><br/>
+                <strong>Step 1.</strong> Pick a cleanup backend:<br/>
+                &nbsp;&nbsp;a) paste a Groq API key below (free at console.groq.com/keys), <em>or</em><br/>
+                &nbsp;&nbsp;b) install Ollama and run <code>ollama pull qwen2.5:1.5b</code> — fully local, no API key.<br/><br/>
+                <strong>Step 2.</strong> Close this window. Hold <kbd>fn</kbd> in any text field, talk, release.<br/>
+                <strong>Step 3.</strong> macOS will ask for <strong>Microphone</strong>, <strong>Accessibility</strong>, and <strong>Input Monitoring</strong>. Grant all three. The Input Monitoring one is what lets us see Fn — macOS doesn't expose it as a normal modifier.
               </div>
             </div>
           )}
           <div className="fb-section">
-            <label className="fb-label">Hotkey</label>
-            <div className="fb-readonly">{settings.hotkey_label}</div>
-            <div className="fb-hint">Hold Right Option to dictate. <kbd>⌘⇧V</kbd> re-pastes last cleaned. <kbd>⌘⇧H</kbd> opens history.</div>
+            <label className="fb-label">The Fun Button</label>
+            <div className="fb-keyboard-glyph">
+              <div className={`fb-key fn ${settings.hotkey_kind === "fn" ? "on" : ""}`} title="The Fn key — bottom-left of every Mac keyboard">
+                <span className="fb-key-label">fn</span>
+                <span className="fb-key-fun">FUN</span>
+              </div>
+              <div className="fb-key-arrow">↑</div>
+              <div className="fb-keyboard-caption">
+                that key, bottom-left of your keyboard.<br/>
+                <span className="fb-muted">nobody used it. we just gave it a job.</span>
+              </div>
+            </div>
+            <div className="fb-radios" style={{marginTop:8}}>
+              {(["fn","right_option"] as const).map(k => (
+                <button
+                  key={k}
+                  className={`fb-pill ${settings.hotkey_kind === k ? "on" : ""}`}
+                  onClick={() => update("hotkey_kind", k)}
+                >{k === "fn" ? "Fn (default)" : "Right Option"}</button>
+              ))}
+            </div>
+            <div className="fb-hint">
+              Default is the <strong>Fun Button</strong> (Fn — bottom-left). Needs Input Monitoring permission on first run.
+              {" "}Switch to <strong>Right Option</strong> if you've already mapped Fn elsewhere (Karabiner, Hyperkey, etc).
+              <br/>
+              <kbd>⌘⇧V</kbd> re-pastes last cleaned · <kbd>⌘⇧H</kbd> opens history · changes apply on next launch.
+            </div>
           </div>
 
           <div className="fb-section">

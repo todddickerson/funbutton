@@ -7,8 +7,38 @@
 
 ---
 
+## Brand Pillar — locked 2026-05-08
+
+**FunButton = Fn (Function) Button.** The brand is a literal rename of the
+dead key at the bottom-left of every Mac keyboard. Most users never bound
+anything to it. We just gave it a job.
+
+**Default hotkey: Fn.** Detected via `CGEventTap` on `flagsChanged` events
+checking the `kCGEventFlagMaskSecondaryFn` (0x00800000) bit — the same path
+Karabiner-Elements, Hyperkey, and Raycast Hotkey use, because macOS does not
+expose Fn as a normal modifier. Requires the **Input Monitoring** permission
+(separate from Accessibility — both are prompted on first run).
+
+**Fallback hotkey: Right Option.** Settings remap option for users who already
+have something bound to Fn (Karabiner / Hyperkey crowd — rare).
+
+**Brand copy** must lean on this everywhere it appears:
+- Settings: "The Fun Button (Fn) — bottom-left of your keyboard."
+- Tray tooltip: "FunButton — hold Fn to dictate"
+- Recording pill subtitle: "release Fn to send"
+- Onboarding: visual of the keyboard with Fn glowing red, label "FUN", caption "nobody used it. we just gave it a job."
+- Landing hero: "The key at the bottom-left of your keyboard finally has a job." (handled by web team in apps/web.)
+- Showdown: row showing "Wispr Flow: Right Option (or any custom modifier)" vs "FunButton: the Fun Button" — emphasize the conceptual elegance of using the dead key.
+
+This is a **design pillar, not a feature.** Treat it as locked. If `CGEventTap`
+cannot be made to work in pure Rust within ~2 hours of attempts, fall back to
+Right Option for v0.1.0 only — but Fn detection MUST land in v0.2.0 or the
+brand collapses.
+
+---
+
 ## North Star
-Todd presses Right Option, talks, releases, and his cleaned-up dictation appears at his cursor in <2 seconds. No cloud lock-in. No 800MB Electron tax. No subscription required.
+Todd presses the Fun Button (Fn — bottom-left of his keyboard), talks, releases, and his cleaned-up dictation appears at his cursor in <2 seconds. No cloud lock-in. No 800MB Electron tax. No subscription required.
 
 ## Positioning (sharpened 2026-05-08 after COMPETITIVE-LANDSCAPE.md)
 The "Tauri + local + cheap" cell is **occupied** — Handy (14k★ MIT) and MumbleFlow ($5) already ship the same stack. So FunButton stacks three claims no single competitor owns simultaneously:

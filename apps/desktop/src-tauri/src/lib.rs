@@ -1,6 +1,7 @@
 mod app_detect;
 mod audio;
 mod cleanup;
+mod fn_hotkey;
 mod groq;
 mod history;
 mod hotkey;
@@ -11,7 +12,7 @@ mod state;
 
 use crate::audio::Recorder;
 use crate::hotkey::HotkeyEvent;
-use crate::state::{AppState, AppStateHandle, Settings, Status};
+use crate::state::{AppState, AppStateHandle, HotkeyKind, Settings, Status};
 
 use parking_lot::Mutex as PMutex;
 use serde::Serialize;
@@ -192,9 +193,18 @@ pub fn run() {
     let _ = history_arc.purge_older_than(initial.history_retention_days);
     let app_state: AppStateHandle = AppState::new(initial, Arc::clone(&history_arc));
 
-    // Hotkey channel
+    // Hotkey channel — pick the listener based on user setting (default: Fn).
     let (tx, rx) = mpsc::channel::<HotkeyEvent>();
-    hotkey::spawn_listener(tx);
+    match app_state.settings.lock().hotkey_kind {
+        HotkeyKind::Fn => {
+            log::info!("hotkey: Fn (CGEventTap)");
+            fn_hotkey::spawn_listener(tx);
+        }
+        HotkeyKind::RightOption => {
+            log::info!("hotkey: Right Option (rdev)");
+            hotkey::spawn_listener(tx);
+        }
+    }
 
     // Shared recorder (one at a time)
     let recorder: Arc<PMutex<Recorder>> = Arc::new(PMutex::new(Recorder::new()));
@@ -290,7 +300,7 @@ pub fn run() {
             let tray: TrayIcon = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .icon_as_template(true)
-                .tooltip("FunButton — idle")
+                .tooltip("FunButton — hold Fn to dictate · ⌘⇧V re-paste · ⌘⇧H history")
                 .menu(&menu)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "open" => {
@@ -377,7 +387,7 @@ fn handle_hotkey_loop(
                         // Less than ~50ms at 48kHz stereo — likely an accidental tap.
                         let _ = rec.stop_and_encode_wav();
                         *state.status.lock() = Status::Idle;
-                        let _ = tray.set_tooltip(Some("FunButton — idle"));
+                        let _ = tray.set_tooltip(Some("FunButton — hold Fn to dictate"));
                         if let Some(p) = app.get_webview_window("pill") {
                             let _ = p.hide();
                         }
@@ -485,7 +495,7 @@ fn handle_hotkey_loop(
                                 },
                             );
                             *state_h.status.lock() = Status::Idle;
-                            let _ = tray_h.set_tooltip(Some("FunButton — idle"));
+                            let _ = tray_h.set_tooltip(Some("FunButton — hold Fn to dictate"));
                             emit_status(&app_h, Status::Idle, None);
                         }
                         Err(e) => {
