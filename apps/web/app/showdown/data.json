@@ -1,0 +1,37 @@
+[
+  {
+    "label": "rambling-email",
+    "mode": "email",
+    "utterance": "Hi um Russell I wanted to like you know follow up about the deal we discussed last week and uh I think we should probably move forward but I'm not sure about the pricing maybe we could do something like 30K instead of 25 since uh you know the scope grew a bit. Let me know what you think.",
+    "raw": "Hi I'm Russell I wanted to like you know follow up about the deal we discussed last week and uh I think we should probably move forward but I'm not sure about the pricing maybe we could do something like 30k instead of 25 since uh you know the scope. Grew a bit. Let me know what you think.",
+    "cleaned": "I wanted to follow up on the deal we discussed last week. I think we should probably move forward, but I have some concerns about the pricing. Given that the scope has grown a bit, I was thinking that 30k might be a more suitable price point than the original 25k. Let me know what you think."
+  },
+  {
+    "label": "slack-correction",
+    "mode": "slack",
+    "utterance": "Hey can you ship that PR by EOD wait actually no make it tomorrow morning since the build is broken in CI right now",
+    "raw": "Hey can you ship that PR by EOD wait actually no make it tomorrow morning since the build is broken in CI right now.",
+    "cleaned": "so just ship that pr tomorrow morning, the build's broken in ci right now anyway 👍"
+  },
+  {
+    "label": "code-arrow-fn",
+    "mode": "code",
+    "utterance": "open paren camelCase user data comma options close paren fat arrow object dot keys open paren user data close paren dot filter open paren camelCase k fat arrow not k dot starts with open paren quote underscore quote close paren close paren",
+    "raw": "Open paren camel case user data comma options close paren fat arrow object dot keys open paren user data close paren dot filter open paren camel case k fat arrow not k dot starts with open paren quote underscore quote close paren close paren.",
+    "cleaned": "(userData, options) => Object.keys(userData).filter(k => !k.startsWith('_'))"
+  },
+  {
+    "label": "snake-case-fn",
+    "mode": "code",
+    "utterance": "function snake_case fetch user profile takes user id of type number returns promise of user",
+    "raw": "function snake case fetch user profile takes user id of type number returns promise of user",
+    "cleaned": "fetchUserProfile(userId: number): Promise<User>"
+  },
+  {
+    "label": "mid-sentence-redirect",
+    "mode": "auto",
+    "utterance": "Let me draft a quick response to that customer about um the refund situation actually no scratch that I'll handle it tomorrow morning when I have my notes in front of me",
+    "raw": "Let me draft a quick response to that customer about um the refund situation actually no scratch that I'll handle it tomorrow morning when I have my notes in front of me.",
+    "cleaned": "I'll handle the refund situation tomorrow morning when I have my notes in front of me."
+  }
+]

@@ -14,6 +14,7 @@ export default function Home() {
           <span className="ml-2 text-[10px] uppercase tracking-widest text-zinc-500 border border-zinc-300 dark:border-zinc-700 px-1.5 py-0.5 rounded">v0.1.0 · alpha</span>
         </div>
         <div className="flex items-center gap-5 text-sm">
+          <Link href="/showdown" className="hover:text-pink-500 font-semibold text-pink-500">showdown</Link>
           <Link href="#how" className="hover:text-pink-500">how</Link>
           <Link href="#vs" className="hover:text-pink-500">vs wispr</Link>
           <Link href="#price" className="hover:text-pink-500">price</Link>
@@ -42,6 +43,13 @@ export default function Home() {
           </a>
         </div>
         <p className="mt-4 text-xs text-zinc-500">unsigned alpha · macOS 12+ · Windows + Linux next</p>
+
+        {/* Animated demo */}
+        <Demo />
+
+        <p className="mt-6 text-sm text-zinc-600 dark:text-zinc-400">
+          See the wedge in action: <Link href="/showdown" className="text-pink-500 font-semibold underline underline-offset-2 hover:no-underline">/showdown</Link> — five real captured outputs, side by side.
+        </p>
       </section>
 
       {/* How it works */}
@@ -61,18 +69,18 @@ export default function Home() {
 
         {/* Code mode demo */}
         <div className="mt-16 grid md:grid-cols-2 gap-4">
-          <Demo label="You say" tone="raw">
+          <ScenarioCard label="You say" tone="raw">
             &ldquo;open paren camelCase user name comma age close paren arrow user name plus age dot to string open paren close paren&rdquo;
-          </Demo>
-          <Demo label="In Cursor" tone="cleaned">
+          </ScenarioCard>
+          <ScenarioCard label="In Cursor" tone="cleaned">
             <code>(userName, age) =&gt; userName + age.toString()</code>
-          </Demo>
-          <Demo label="You say" tone="raw">
+          </ScenarioCard>
+          <ScenarioCard label="You say" tone="raw">
             &ldquo;um so like new function snake_case fetch user data takes id returns promise of user&rdquo;
-          </Demo>
-          <Demo label="Code mode in VS Code" tone="cleaned">
+          </ScenarioCard>
+          <ScenarioCard label="Code mode in VS Code" tone="cleaned">
             <code>function fetch_user_data(id): Promise&lt;User&gt;</code>
-          </Demo>
+          </ScenarioCard>
         </div>
         <p className="text-xs text-zinc-500 mt-3">Code mode auto-activates in Cursor, VS Code, JetBrains, Vim, Terminal, Xcode.</p>
       </section>
@@ -151,6 +159,47 @@ export default function Home() {
   );
 }
 
+function Demo() {
+  return (
+    <div className="mt-14 mx-auto max-w-3xl">
+      <div className="relative rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden">
+        {/* Mock window chrome */}
+        <div className="flex items-center gap-2 px-4 py-3 bg-zinc-100 dark:bg-zinc-800 border-b border-zinc-200 dark:border-zinc-700">
+          <div className="flex gap-1.5">
+            <span className="w-3 h-3 rounded-full bg-red-400" />
+            <span className="w-3 h-3 rounded-full bg-yellow-400" />
+            <span className="w-3 h-3 rounded-full bg-green-400" />
+          </div>
+          <span className="text-xs text-zinc-500 ml-2 font-mono">Cursor — main.tsx</span>
+        </div>
+
+        {/* Mock editor surface */}
+        <div className="p-6 font-mono text-sm leading-relaxed text-left min-h-[200px] bg-white dark:bg-zinc-900">
+          <div className="text-zinc-400 dark:text-zinc-500">// Press <span className="text-pink-500 font-bold">Right Option</span>, then say:</div>
+          <div className="text-zinc-400 dark:text-zinc-500 italic mb-4">// &quot;open paren camelCase user data comma options close paren fat arrow…&quot;</div>
+          <div className="fb-typing">
+            <span className="text-pink-500">const</span>{" "}
+            <span className="text-blue-600 dark:text-blue-400">filter</span>{" "}
+            <span className="text-zinc-500">=</span>{" "}
+            <span className="text-zinc-700 dark:text-zinc-300">(userData, options)</span>{" "}
+            <span className="text-zinc-500">=&gt;</span>{" "}
+            <span className="text-zinc-700 dark:text-zinc-300">Object.keys(userData).filter(k =&gt; !k.startsWith(</span>
+            <span className="text-green-600 dark:text-green-400">&apos;_&apos;</span>
+            <span className="text-zinc-700 dark:text-zinc-300">))</span>
+          </div>
+          <span className="fb-cursor">▍</span>
+        </div>
+
+        {/* Floating pill */}
+        <div className="fb-pill-demo absolute top-3 right-3 flex items-center gap-2 px-3 py-2 rounded-full text-xs font-bold shadow-lg">
+          <span className="fb-pill-dot" />
+          <span className="fb-pill-text">recording</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Step({ n, title, children }: { n: string; title: string; children: React.ReactNode }) {
   return (
     <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6 bg-white dark:bg-zinc-900">
@@ -161,7 +210,7 @@ function Step({ n, title, children }: { n: string; title: string; children: Reac
   );
 }
 
-function Demo({ label, tone, children }: { label: string; tone: "raw" | "cleaned"; children: React.ReactNode }) {
+function ScenarioCard({ label, tone, children }: { label: string; tone: "raw" | "cleaned"; children: React.ReactNode }) {
   return (
     <div className={`rounded-lg p-5 border ${tone === "raw" ? "border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300" : "border-pink-300 dark:border-pink-900 bg-pink-50 dark:bg-pink-950/30 text-zinc-900 dark:text-zinc-50"}`}>
       <div className="text-[10px] uppercase tracking-widest mb-2 opacity-60">{label}</div>

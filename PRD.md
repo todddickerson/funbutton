@@ -79,7 +79,7 @@ For shipped app: user enters their own Groq key in Settings. Defaults pull from 
 - [ ] Cmd+Shift+H to toggle history window
 - [ ] Per-mode tone tuning sliders (formal ↔ casual)
 - [ ] Polished onboarding: 30-second walkthrough on first launch — leans punk/fun brand
-- [ ] **Bundled local LLM (upgrade from MVP toggle):** ship a quantized GGUF model (`qwen2.5:1.5b` Q4_K_M, ~1GB) inside the .app, with embedded llama.cpp runtime. User no longer needs Ollama installed for local mode. "No API key. Ever." becomes literally true post-install.
+- [x] **Bundled local LLM — DECISION: SKIP (locked 2026-05-08, post-Sprint-1 wargame).** The current 5 MB unsigned bundle is the actual differentiator. Bundling a 1 GB GGUF would be a 200× bloat for the 80 % of users who'll paste a Groq key. Ollama auto-detect already serves the local-LLM-curious user, with one shell line: `brew install ollama && ollama pull qwen2.5:1.5b`. Documented in README + landing. Revisit only if Ollama detection fails for >10 % of testers.
 - [ ] Local Whisper fallback toggle (whisper.cpp + small.en model bundled)
 - [ ] Per-language code profiles (Python: `def`/`self`; JS/TS: `const`/`=>`; Rust: `let`/`mut`; etc.)
 

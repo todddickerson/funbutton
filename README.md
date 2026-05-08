@@ -47,7 +47,7 @@ If macOS Gatekeeper blocks the unsigned build: `sudo xattr -cr /Applications/Fun
 
 **First run:** macOS will ask for **Microphone** and **Accessibility** permissions. Grant both.
 
-**Local cleanup mode:** install [Ollama](https://ollama.ai) and `ollama pull qwen2.5:1.5b`.
+**Want zero-API-key, ever?** `brew install ollama && ollama pull qwen2.5:1.5b` — FunButton finds it automatically. The installer stays ~5 MB on purpose. We don't bundle a model so we don't bloat the download for the 80 % of users who'll just paste a Groq key.
 
 ## Use
 

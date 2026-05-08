@@ -266,6 +266,13 @@ fn handle_hotkey_loop(
         .build()
         .expect("tokio runtime");
 
+    // Pre-warm the Groq HTTP/2 connection so the first dictation pays no
+    // TCP+TLS handshake cost. Best-effort — failures are fine.
+    {
+        let key = state.settings.lock().groq_api_key.clone();
+        rt.spawn(async move { groq::prewarm(&key).await });
+    }
+
     while let Ok(ev) = rx.recv() {
         match ev {
             HotkeyEvent::Down => {
