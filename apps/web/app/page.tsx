@@ -51,16 +51,21 @@ export default function ComingSoon() {
         </p>
 
         <h1 className="text-5xl sm:text-7xl font-bold tracking-tight leading-[1.05]">
-          Talk fast.
+          The key at the bottom-left
           <br />
-          Stay local.
+          of your Mac
           <br />
-          <span className="text-red-400">Pay less.</span>
+          <span className="text-red-400">finally does something.</span>
         </h1>
 
         <p className="mt-8 text-lg sm:text-xl text-neutral-400 max-w-xl leading-relaxed">
-          Voice dictation for people who actually ship. One button, your laptop,
-          no cloud tax. <span className="text-neutral-200">Wispr Flow without the SaaS.</span>
+          Hold <kbd className="inline-flex items-center justify-center px-2 py-0.5 mx-0.5 font-mono text-base font-bold text-red-300 bg-neutral-900 border border-red-500/40 rounded shadow-[0_0_12px_rgba(239,68,68,0.25)] align-middle">Fn</kbd>. Talk. Release. Get clean text — your dictionary, your tone, your machine.
+          <br className="hidden sm:inline" />
+          <span className="text-neutral-200">No cloud tax. No subscription. This is the Fun Button.</span>
+        </p>
+
+        <p className="mt-4 font-mono text-xs text-neutral-600 max-w-xl">
+          → talk fast · stay local · pay less
         </p>
 
         {/* Email capture */}
