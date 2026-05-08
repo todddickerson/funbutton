@@ -46,6 +46,15 @@ body { margin: 0; }
 .fb-input { padding: 8px 10px; border: 1px solid #d8d8d8; border-radius: 6px; background: #fff; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; outline: none; }
 .fb-input:focus { border-color: #ff3366; box-shadow: 0 0 0 2px rgba(255,51,102,0.15); }
 .fb-textarea { resize: vertical; line-height: 1.5; }
+.fb-welcome { background: linear-gradient(135deg, #fff5f8, #fff0f5); border: 1px solid #ffaabb; border-radius: 8px; padding: 14px 16px; margin-bottom: 4px; }
+.fb-welcome-title { font-weight: 800; color: #ff3366; font-size: 15px; margin-bottom: 6px; letter-spacing: -0.01em; }
+.fb-welcome-body { font-size: 12px; line-height: 1.65; color: #444; }
+.fb-welcome-body code { background: rgba(255,51,102,0.12); padding: 1px 5px; border-radius: 3px; }
+@media (prefers-color-scheme: dark) {
+  .fb-welcome { background: rgba(255,51,102,0.08); border-color: rgba(255,51,102,0.4); }
+  .fb-welcome-body { color: #ddd; }
+  .fb-welcome-body code { background: rgba(255,51,102,0.2); color: #ffaabb; }
+}
 kbd { background: #fff; border: 1px solid #d8d8d8; border-radius: 4px; padding: 1px 5px; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 @media (prefers-color-scheme: dark) {
   kbd { background: #2a2a2a; border-color: #444; color: #ddd; }

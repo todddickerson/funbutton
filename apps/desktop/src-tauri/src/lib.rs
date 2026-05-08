@@ -128,6 +128,7 @@ fn persist(s: &Settings) -> anyhow::Result<()> {
 pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    let first_run = !settings_path().exists();
     let initial = load_settings();
     let app_state: AppStateHandle = AppState::new(initial);
 
@@ -179,12 +180,17 @@ pub fn run() {
             open_settings,
         ])
         .setup(move |app| {
-            // Hide both windows on launch — we are a menu bar app.
-            if let Some(w) = app.get_webview_window("settings") {
-                let _ = w.hide();
-            }
+            // Menu bar app — hide pill always, show settings only on first run.
             if let Some(w) = app.get_webview_window("pill") {
                 let _ = w.hide();
+            }
+            if let Some(w) = app.get_webview_window("settings") {
+                if first_run {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                } else {
+                    let _ = w.hide();
+                }
             }
 
             // Register Cmd+Shift+V re-paste shortcut.

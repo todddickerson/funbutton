@@ -87,6 +87,18 @@ function App() {
         <div className="fb-loading">loading…</div>
       ) : (
         <div className="fb-form">
+          {settings.groq_api_key.trim() === "" && ollamaUp === false && (
+            <div className="fb-welcome">
+              <div className="fb-welcome-title">welcome.</div>
+              <div className="fb-welcome-body">
+                Pick one to get started:<br/>
+                <strong>1.</strong> paste a Groq API key below (free at console.groq.com/keys), <strong>or</strong><br/>
+                <strong>2.</strong> install Ollama and run <code>ollama pull qwen2.5:1.5b</code> for full local mode.<br/><br/>
+                Then close this window. Hold <kbd>Right Option</kbd> in any text field, talk, release.
+                If macOS asks for Microphone or Accessibility, grant both.
+              </div>
+            </div>
+          )}
           <div className="fb-section">
             <label className="fb-label">Hotkey</label>
             <div className="fb-readonly">{settings.hotkey_label}</div>
