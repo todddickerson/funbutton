@@ -36,7 +36,14 @@
 - Sprint 2.6 will add a real onboarding wizard with the keyboard SVG + permission stepper. The Settings welcome banner is the v1 of that.
 
 **Live URL:** https://funbutton.ai (coming-soon)
-**Release:** https://github.com/todddickerson/funbutton/releases/tag/v0.1.0-alpha (pending repackage)
+**Release:** https://github.com/todddickerson/funbutton/releases/tag/v0.1.0-alpha
+- `FunButton-v0.1.0-macos-arm64.dmg` — 6.19 MB (sha256 `f078d7b3…`)
+- `FunButton-v0.1.0-macos-arm64.zip` — 5.64 MB (sha256 `be1171da…`)
+- Bundle now ~12 MB on disk (rusqlite-bundled adds ~1.8 MB; `core-graphics` + `core-foundation` are mostly bindings, near-zero size). Still well below the wargame's "stay 15-20 MB cloud-only" ceiling.
+
+**Verified in the built `.app`'s Info.plist:** `NSMicrophoneUsageDescription`, `NSAppleEventsUsageDescription`, `NSInputMonitoringUsageDescription`, `LSUIElement` (menu-bar app, no Dock icon).
+
+**Stopping now.** Saturday post-rate-limit-reset picks up Sprint 2.6 — snippets, smart-dictionary, per-user learning loop, command mode — after reading QUALITY-MATCH-SPEC.md.
 
 **Blocked:** none.
 
