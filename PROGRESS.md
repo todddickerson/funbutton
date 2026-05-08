@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-05-08 18:10 — Sprint 2 features + funbutton.ai live
+
+**Done:**
+- **Cmd+Shift+V re-paste:** `tauri-plugin-global-shortcut` registers the chord. Stores last cleaned in `AppState.last_cleaned`. Press the chord and the last clean text re-injects at the cursor. Falls back silently if the shortcut is busy.
+- **Mode override** in settings: Auto / Code / Email / Slack / Raw radios. Overrides the auto-detected mode from the frontmost-app classifier.
+- **Custom dictionary:** textarea, one term per line. Cleanup prompt is augmented with `USER DICTIONARY` block so brand names ("ClickFunnels", "Spontent") land verbatim even when Whisper hears them slightly off.
+- **funbutton.ai DNS:** Spaceship API call set apex + www to A 76.76.21.21 (Vercel's IP). Vercel project linked. `funbutton.ai` resolves and returns HTTP 200 already. HTTPS coming online as Vercel provisions Let's Encrypt.
+- New release Tauri build in progress.
+
+**What's still queued for Sprint 2:**
+- Bundled local LLM (Qwen 2.5 1.5B GGUF + embedded llama.cpp) — high effort, deferred for end-of-Sunday push if time permits.
+- Transcription history + SQLite (the re-paste hotkey covers ~80% of the value).
+- Hotkey remap UI (settings shows the label but doesn't let user rebind yet — Right Option default is fine for Todd's keyboard).
+- Polished onboarding wizard.
+
+**Blocked:** none.
+
+---
+
 ## 2026-05-08 17:50 — Landing page live at funbutton.vercel.app
 
 **Done:**
