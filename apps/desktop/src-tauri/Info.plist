@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>FunButton uses your microphone to transcribe what you say into text. Audio is sent only to your configured cleanup backend (Groq Whisper by default, or local Ollama if enabled).</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>FunButton uses Apple Events to detect the frontmost app for context-aware code mode and to paste cleaned text via Cmd+V.</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.productivity</string>
+</dict>
+</plist>
