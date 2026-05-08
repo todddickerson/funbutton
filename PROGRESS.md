@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-05-08 22:35 — Coming-soon landing live + Resend audience capture
+
+**Done:**
+- **Replaced full-features landing with a punk coming-soon page at funbutton.ai.** Dark mode default, monospace accents, geometric grid backdrop, animated red round-button glyph as the wordmark, ▌ COMING SOON eyebrow, hero `Talk fast. / Stay local. / Pay less.` (with `Pay less.` in red), tagline "Voice dictation for people who actually ship. One button, your laptop, no cloud tax. Wispr Flow without the SaaS.", build-in-public link to github.com/todddickerson/funbutton. Footer reminds: "no trackers on this page" + "one button. your computer. your data."
+- **Email capture via Resend.** Audience `funbutton-prelaunch` (id `8fdf9640-a0b7-4760-a104-7fb66a117808`) created. New API route `/api/subscribe` (edge runtime) validates email, POSTs to `/audiences/{id}/contacts`, treats Resend 422 (duplicate) as success so we don't leak subscriber state. Verified end-to-end: real submission landed in audience.
+- **Success state:** "✓ you're on the list. Watch this space." + GitHub stars shield + "for the brave: download the alpha →" linking to /releases (the v0.1.0-alpha link the desktop build agent ships against — untouched).
+- **Project relinked to personal Vercel team** (`team_WGP9MIPM09U2lDW7YDqVIDsK` / `todddickerson`). Old Bootstrapped-team funbutton project domains released, new project owns funbutton.ai + www. SSL provisioned, HTTP 200 confirmed, DNS already wired (Spaceship A `76.76.21.21`, CNAME `cname.vercel-dns.com`).
+- **/showdown route preserved** — the wargame demo page is intact. Only `/` was replaced.
+- **Performance:** static prerendered, no analytics, no third-party scripts beyond the GitHub stars shield (only loads on success state).
+
+**Stop point.** Coming-soon is live. Pre-launch list builds while the desktop build agent finishes Sprint 2/3.
+
+**Live URL:** https://funbutton.ai
+**Resend audience:** `8fdf9640-a0b7-4760-a104-7fb66a117808`
+
+**Blocked:** none.
+
+---
+
 ## 2026-05-08 19:50 — Sprint 2.5: transcription archive + paste-failure recovery
 
 **Done — the safety net is in.**
