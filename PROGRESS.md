@@ -4,6 +4,29 @@
 
 ---
 
+## 2026-05-08 18:30 — First-run UX + funbutton.ai HTTPS live + test script
+
+**Done:**
+- **First-run UX:** if `~/.funbutton/settings.json` doesn't exist, the settings window opens automatically on launch. Subsequent launches stay silent in the tray. Welcome banner appears in settings when no Groq key is set AND Ollama isn't detected — points the user at the two paths (paste a key OR install Ollama + qwen2.5:1.5b) and reminds about Mic + Accessibility prompts.
+- **`scripts/test_pipeline.sh`:** synthesizes a WAV via macOS `say`, runs Whisper + Llama 3.3 cleanup with the actual code-mode prompt, prints raw vs cleaned. Verified locally: "Open paren camel case first name comma last name…" → `(firstName, lastName) => firstName + ' ' + lastName`. Useful for sanity-checking the Groq endpoints when audio capture isn't the suspect.
+- **funbutton.ai HTTPS live** via Vercel (`www.funbutton.ai` cert provisioned, apex following). Pointed via Spaceship API.
+- New release Tauri build with all Sprint 2 features in progress; will repackage and update v0.1.0-alpha artifacts on completion.
+
+**Still on the Sprint 2 backlog (Sun if time):**
+- Bundled Qwen 2.5 1.5B GGUF + embedded llama.cpp for literal "no API key, ever" — Ollama detection covers the user story for now, but bundling makes the brand promise truer post-install.
+- Hotkey remap UI in settings (Right Option default works for Todd's keyboard; user remap is for everyone else).
+- Polished onboarding wizard (welcome banner is the v1).
+- Transcription history (re-paste shortcut covers ~80% of the value).
+
+**Sprint 3 (Mon AM):**
+- Auto-update via Tauri updater pointing at GH Releases JSON.
+- 30-second demo video / GIF for landing.
+- Final Telegram + landing-CTA polish once Todd has hands-on feedback.
+
+**Blocked:** none.
+
+---
+
 ## 2026-05-08 18:10 — Sprint 2 features + funbutton.ai live
 
 **Done:**
