@@ -77,6 +77,8 @@ pub struct Settings {
     pub dictionary: Vec<String>,
     #[serde(default = "default_retention_days")]
     pub history_retention_days: u32,
+    #[serde(default)]
+    pub onboarded: bool,
 }
 
 fn default_retention_days() -> u32 { 30 }
@@ -102,6 +104,7 @@ impl Default for Settings {
             mode_override: ModeOverride::default(),
             dictionary: Vec::new(),
             history_retention_days: default_retention_days(),
+            onboarded: false,
         }
     }
 }

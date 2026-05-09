@@ -128,6 +128,81 @@ fn open_settings(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn open_onboarding(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("onboarding") {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn close_onboarding(app: AppHandle, state: tauri::State<'_, AppStateHandle>) -> Result<(), String> {
+    {
+        let mut s = state.settings.lock();
+        s.onboarded = true;
+        let _ = persist(&s);
+    }
+    if let Some(win) = app.get_webview_window("onboarding") {
+        let _ = win.hide();
+    }
+    // Show the quick-ref card via the settings webview as a transient overlay,
+    // and trigger a tray-icon flash.
+    let _ = app.emit("funbutton:onboarding-complete", ());
+    Ok(())
+}
+
+/// Open a Privacy & Security pane in System Settings via macOS URL scheme.
+/// `panel` is one of: "microphone" | "accessibility" | "input_monitoring".
+#[tauri::command]
+fn open_system_settings_panel(panel: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let url = match panel.as_str() {
+            "microphone" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+            "accessibility" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            "input_monitoring" => "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
+            other => return Err(format!("unknown panel: {other}")),
+        };
+        std::process::Command::new("open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| format!("open failed: {e}"))?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = panel;
+    }
+    Ok(())
+}
+
+/// Validate a Groq API key by hitting GET /v1/models. Returns (ok, message).
+#[tauri::command]
+async fn validate_groq_key(key: String) -> Result<bool, String> {
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        return Err("empty key".into());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get("https://api.groq.com/openai/v1/models")
+        .bearer_auth(trimmed)
+        .send()
+        .await
+        .map_err(|e| format!("network: {e}"))?;
+    if resp.status().is_success() {
+        Ok(true)
+    } else if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        Err("invalid key".into())
+    } else {
+        Err(format!("unexpected status: {}", resp.status()))
+    }
+}
+
 fn settings_path() -> std::path::PathBuf {
     let mut p = dirs_home();
     p.push(".funbutton");
@@ -219,6 +294,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_macos_permissions::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -259,18 +335,27 @@ pub fn run() {
             get_last_transcript,
             ollama_check,
             open_settings,
+            open_onboarding,
+            close_onboarding,
+            open_system_settings_panel,
+            validate_groq_key,
             history_list,
             history_copy,
             history_purge_now,
             history_last_failed,
         ])
         .setup(move |app| {
-            // Menu bar app — hide pill always, show settings only on first run.
+            // Menu bar app. Pill always hidden until recording. Settings hidden
+            // by default. Onboarding shown if user hasn't completed it.
             if let Some(w) = app.get_webview_window("pill") {
                 let _ = w.hide();
             }
             if let Some(w) = app.get_webview_window("settings") {
-                if first_run {
+                let _ = w.hide();
+            }
+            let needs_onboarding = first_run || !app_state.settings.lock().onboarded;
+            if let Some(w) = app.get_webview_window("onboarding") {
+                if needs_onboarding {
                     let _ = w.show();
                     let _ = w.set_focus();
                 } else {
@@ -327,7 +412,8 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // Hide instead of closing — we live in the tray.
-                if window.label() == "settings" {
+                let label = window.label();
+                if label == "settings" || label == "onboarding" {
                     api.prevent_close();
                     let _ = window.hide();
                 }

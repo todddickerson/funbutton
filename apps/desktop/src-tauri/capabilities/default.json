@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "FunButton desktop capabilities",
-  "windows": ["settings", "pill"],
+  "windows": ["onboarding", "settings", "pill"],
   "permissions": [
     "core:default",
     "core:window:default",
@@ -14,6 +14,7 @@
     "clipboard-manager:default",
     "autostart:default",
     "global-shortcut:default",
-    "notification:default"
+    "notification:default",
+    "macos-permissions:default"
   ]
 }

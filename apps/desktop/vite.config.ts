@@ -14,6 +14,7 @@ export default defineConfig(async () => ({
       input: {
         main: resolve(__dirname, "index.html"),
         pill: resolve(__dirname, "pill.html"),
+        onboarding: resolve(__dirname, "onboarding.html"),
       },
     },
   },

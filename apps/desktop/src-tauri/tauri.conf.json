@@ -13,6 +13,22 @@
     "macOSPrivateApi": true,
     "windows": [
       {
+        "label": "onboarding",
+        "title": "FunButton — Welcome",
+        "url": "onboarding.html",
+        "width": 720,
+        "height": 520,
+        "resizable": false,
+        "minimizable": true,
+        "maximizable": false,
+        "fullscreen": false,
+        "transparent": false,
+        "decorations": true,
+        "visible": false,
+        "center": true,
+        "alwaysOnTop": false
+      },
+      {
         "label": "settings",
         "title": "FunButton — Settings",
         "url": "index.html",
