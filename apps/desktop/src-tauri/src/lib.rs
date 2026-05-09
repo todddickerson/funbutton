@@ -147,8 +147,16 @@ fn close_onboarding(app: AppHandle, state: tauri::State<'_, AppStateHandle>) -> 
     if let Some(win) = app.get_webview_window("onboarding") {
         let _ = win.hide();
     }
-    // Show the quick-ref card via the settings webview as a transient overlay,
-    // and trigger a tray-icon flash.
+    // Quick-reference card: macOS native notification (top-right corner,
+    // auto-hides) — exactly the surface the onboarding spec called for, and
+    // it doesn't require a fourth webview window.
+    use tauri_plugin_notification::NotificationExt;
+    let _ = app
+        .notification()
+        .builder()
+        .title("FunButton is ready")
+        .body("hold fn to dictate · ⌘⇧V re-paste · ⌘⇧H history · click the tray icon for settings")
+        .show();
     let _ = app.emit("funbutton:onboarding-complete", ());
     Ok(())
 }

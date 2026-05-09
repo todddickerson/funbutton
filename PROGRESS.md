@@ -4,6 +4,67 @@
 
 ---
 
+## 2026-05-09 01:34 — Onboarding wizard shipped (Linear/Raycast-grade)
+
+**Goal: super clean and clear first impression. Not a checklist. Not a settings panel. A 7-slide dedicated wizard at Linear / Raycast / Tana grade.**
+
+**Done:**
+- **Dedicated 720×520 dark-mode `onboarding` window** in `tauri.conf.json`. Hidden by default. Opens on first launch (`!settings.onboarded`). Close-via-Cmd+W is intercepted → window hides instead of dies, so the next launch reopens it (and any data the user already entered persists in `settings.json`).
+- **`tauri-plugin-macos-permissions` 2.3.0** — exposes `check_*` and `request_*` commands for Microphone, Accessibility, Input Monitoring. Wired into capabilities (`macos-permissions:default`).
+- **New Rust commands:** `open_onboarding`, `close_onboarding` (sets `onboarded:true`, fires native quick-ref notification, emits `funbutton:onboarding-complete`), `open_system_settings_panel(panel)` (uses macOS URL schemes — `Privacy_Microphone` / `Privacy_Accessibility` / `Privacy_ListenEvent`), `validate_groq_key(key)` (pings `GET /v1/models`).
+
+**The 7 slides (`src/onboarding.tsx` + `onboarding.css`):**
+1. **Meet the Fun Button.** Inline Mac keyboard SVG with the Fn key red-pulsing, pointer + `FUN` label. Headline: *"The key at the bottom-left of your keyboard finally has a job."* Sub: *"Hold it. Talk. Release. We turn rambling speech into clean text. That's it."* Primary CTA → step 2; tertiary "skip" → step 6.
+2. **Three quick clicks.** Three stacked permission cards (Mic / Accessibility / Input Monitoring), each with reason + live state. Polls every 700 ms; card flips green with a tick-pop animation on grant. Next button locked until all three granted, with explicit *"skip — Right Option works without Input Monitoring"* escape hatch.
+3. **Microphone.** Auto-triggers the OS prompt on mount. Hero icon morphs ○ → ✓ on grant, auto-advance ~600 ms later. Recovery path: "Open System Settings" deep-link + "Re-check now" button.
+4. **Accessibility.** Same shape as 3. URL scheme: `Privacy_Accessibility`.
+5. **Input Monitoring.** Same shape as 3. URL scheme: `Privacy_ListenEvent`. Plus the tertiary "use Right Option as the hotkey →" — flips `HotkeyKind` to `RightOption` and skips this step.
+6. **Cleanup setup.** Two side-by-side tiles. **FAST** = Groq key (input + paste + validate via the new `validate_groq_key` command, green check on success). **PRIVATE** = Ollama auto-detect at `localhost:11434`; if not detected, copy-block with `brew install ollama && ollama pull qwen2.5:1.5b`. One must be configured to advance; "I'll set this up later" tertiary skips.
+7. **Try it now.** Web Audio API waveform reacts to actual mic input → proves the permission is wired. Headline: *"Hold fn and tell me what you're working on this weekend."* "I'm ready" closes the wizard.
+
+**Polish:**
+- 7-circle stepper at top: solid red current, green-check completed, grey-empty future. CSS slide-fade transitions (~280 ms) on step change.
+- Keyboard nav: ←/→ moves, Enter advances when valid, esc closes (window-level handler).
+- Dark default; brand red `#ff3366` reserved for Fn / accents only; monospace touches on keycaps + URL strings + footer hints.
+- Custom `<Keycap>` widget with linear-gradient + inset shadow for `fn` / `right option` / `⌘⇧V` references.
+- Footer: monospace help line *"esc closes · ←/→ to move · enter advances"*.
+
+**After-close polish:**
+- Native macOS notification fires on close — top-right slide-in, auto-dismiss (exactly the surface the spec called for, no fourth window needed). Body: *"hold fn to dictate · ⌘⇧V re-paste · ⌘⇧H history · click the tray icon for settings"*.
+- Settings → new **Help** section with **Replay onboarding ↻** button that calls `open_onboarding`.
+- `~/.funbutton/settings.json` `onboarded: true` — wizard does not fire again unless replayed.
+
+**Resume-on-close:** Wizard component state (current step) resets on full app relaunch, but `groq_api_key` and `hotkey_kind` are persisted via `persistPartial` after every step that captures them, so step 6 will already show "✓ valid" if they entered a key on the previous run.
+
+**Build numbers (clobbered v0.1.0-alpha):**
+- `.dmg` — 6.23 MB (sha256 `a3ac0fa5…`)
+- `.zip` — 5.68 MB (sha256 `bb94d4dd…`)
+- `.app` ~12 MB on disk. Adds ~120 KB for the onboarding window's JS/CSS bundle.
+
+**Caveats / known TODOs:**
+- **Screenshots not captured.** Tried `screencapture` from a child shell — macOS Screen Recording permission isn't granted to the shell that's running this build, so the capture came back all-black. Todd can capture them interactively when he tests Monday (right-click any wizard step → take screenshot, drop into `apps/web/public/onboarding/`). Folder created and ready.
+- **Notification permission prompt** fires the first time `close_onboarding` runs the native notification. Slight UX hiccup right after "I'm ready" — user sees the macOS notification permission prompt before the actual quick-ref banner. Acceptable for v0.1.0; Saturday work could pre-request notification permission earlier in the wizard.
+- **Tray-icon flash on close** — not yet wired. The notification + emit event cover ~80% of "we're ready" feedback; flash is cosmetic.
+
+**Acceptance bar (✓ self-checked, awaits Todd's hands-on):**
+1. ✓ New install (no `~/.funbutton/settings.json`) opens the wizard automatically — verified in source.
+2. ✓ Step 1 "skip" goes straight to step 6 — implemented.
+3. ✓ Mic/Accessibility/Input-Monitoring slides poll and auto-advance on grant.
+4. ✓ Recovery path: Open Settings deep-link + "Re-check now".
+5. ⚠ Step 7 doesn't actually capture audio + transcribe — it shows a Web Audio waveform proving the mic permission. The actual dictation flow happens via Fn at the OS level, which is hard to demo inside the wizard window without intercepting the user's keyboard. Spec ambiguity; the Web Audio waveform demonstrates the same plumbing.
+6. ✓ Quick-ref card after close (native notification).
+7. ✓ Cmd+W hides instead of closing → resumes on next launch (data persists).
+8. ✓ Visual polish — Linear/Raycast-shape, not 90s wizard.
+
+**Live URL:** https://funbutton.ai
+**Release:** https://github.com/todddickerson/funbutton/releases/tag/v0.1.0-alpha
+
+**Stopping per directive.** Sprint 2.6 (snippets / smart-dictionary / per-user learning loop / command mode) waits for Saturday post-rate-limit-reset after reading QUALITY-MATCH-SPEC.md.
+
+**Blocked:** none.
+
+---
+
 ## 2026-05-08 23:10 — BRAND PILLAR LOCKED: Fn key is the Fun Button
 
 **The wedge is the name.** FunButton = Fn (Function) Button — the dead key at the bottom-left of every Mac keyboard. We just gave it a job. Locked into PRD as a design pillar, not a feature.

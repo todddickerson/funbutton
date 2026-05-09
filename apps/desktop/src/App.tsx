@@ -326,6 +326,16 @@ function App() {
             <button className="fb-btn" onClick={save}>{saved ? "saved ✓" : "save"}</button>
           </div>
 
+          <div className="fb-section">
+            <label className="fb-label">Help</label>
+            <button
+              className="fb-btn-small"
+              onClick={() => invoke("open_onboarding")}
+              style={{ alignSelf: "flex-start" }}
+            >Replay onboarding ↻</button>
+            <div className="fb-hint">Walks through the Fn key intro, the three permissions, and the cleanup setup again.</div>
+          </div>
+
           <footer className="fb-footer">
             v0.1.0 · GPLv3 · <a href="https://github.com/todddickerson/funbutton" target="_blank" rel="noreferrer">github</a>
           </footer>
