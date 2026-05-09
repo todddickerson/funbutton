@@ -125,11 +125,16 @@ For shipped app: user enters their own Groq key in Settings. Defaults pull from 
 - [ ] PROGRESS.md committed each sprint with what shipped + what slipped
 
 ### V1.1 / V2 (post-Monday — backlog)
+- **Week 2 (V1.1) — Monetization sprint (7 days, see WORKER-SPEC.md):**
+  - Cloudflare Worker at api.funbutton.ai (license verify, transcribe/cleanup proxy, usage logging)
+  - Stripe Checkout: Pro $9/mo, Pro $79/yr, Lifetime $149/$199/$249 ladder
+  - Premium metered usage (Haiku/Sonnet/Opus/GPT-4.1) with app-side cap enforcement
+  - Desktop Settings UI: cap slider, license activation, fallback toast, monthly receipt link
+  - ROSCA + California ARL-compliant auto top-up flow (opt-in OFF by default, plain-English disclosure, one-click cancel)
 - Windows build (Tauri 2 makes this 1-2 days)
 - Linux build (X11 day-1, Wayland later)
 - Streaming transcription (Deepgram or local Parakeet TDT)
-- Stripe billing, license server, paid tiers
-- Team features
+- Team features (V2 — $7/seat/mo annual, 3-seat min)
 - Telemetry (privacy-respecting, PostHog with opt-in)
 - Code-signing with Apple Developer ID + notarization
 - iOS keyboard companion
@@ -137,11 +142,60 @@ For shipped app: user enters their own Groq key in Settings. Defaults pull from 
 
 ---
 
-## Pricing (decision for landing page)
-- **Free:** Unlimited local Whisper (BYO compute), bring-your-own-API-key for cloud
-- **Pro $7/mo annual / $10/mo monthly:** Includes cloud quota (10K words/month), all modes, sync
-- **Lifetime $99 (first 1,000 customers, then $149):** Founder's pricing, kills subscription fatigue
-- **Team $5/seat/mo (5+ seats):** Shared dictionary, admin
+## Pricing (LOCKED — validated 2026-05-09 via deep research, see PRICING-RESEARCH.md for citations)
+
+### Tiers
+
+**Free — forever, no card.**
+- BYOK Groq key OR local Ollama, GPLv3 desktop core
+- Unlimited use; user pays Groq directly (their key) or zero (local)
+- This is the punk-rock pillar. We don't ransom your voice.
+
+**Pro — $9/mo or $79/yr (~26 % discount on annual).**
+- Groq Whisper Turbo + Llama 3.3 70B unlimited (soft ceiling 500K words/mo — well above 95th percentile of real users at ~187K)
+- 50K words/mo of premium cleanup included (Claude Haiku 4.5 default)
+- All modes, dictionary, history, sync
+- Above included quota → metered pay-as-you-go (see meter below) gated by user-set monthly cap
+
+**Lifetime — founder ladder, no recurring charges on the base license.**
+- **$149** for first 1,000 customers
+- **$199** for next 1K → 5K
+- **$249** thereafter
+- Includes Groq fast tier unlimited forever
+- Premium cleanup is pay-as-you-go (no included quota); same metered pricing as Pro overage, same user-set cap
+- Tier auto-bumps via Stripe webhook on sales count crossings
+
+**Team — $7/seat/mo annual, 3-seat minimum.**
+- Defer to V2 (post-launch). Same engine, shared dictionary, admin console.
+
+### Premium model meter (Pro overage + Lifetime usage)
+
+| Model | Price per 10K words | Margin | Notes |
+|---|---|---|---|
+| **Claude Haiku 4.5** | **$0.40** | ~78 % | Default premium, best quality/$ for cleanup |
+| Claude Sonnet 4.7 | $0.60 | ~50 % | Pro+ tier (long-form, code) |
+| Claude Opus 4.7 | $0.99 | ~40 % | Reasoning tier (only when user explicitly picks) |
+| GPT-4.1 | $0.50 | ~55 % | Alternative provider; replaces deprecating GPT-4o |
+
+### Auto top-up & user cap (compliance-first)
+
+- **Default cap $20/mo**, user-configurable slider $0–$100 in Settings
+- **$0 = hard stop** — silently falls back to Groq fast tier with toast notification ("You hit your monthly cap. Premium cleanup paused. Adjust in Settings.")
+- **Opt-in OFF by default** to satisfy ROSCA + California ARL — user must affirmatively enable auto top-up
+- **Plain-English disclosure** at activation, monthly receipt email, one-click disable in Settings
+- **CRITICAL ENFORCEMENT NOTE:** Stripe `billing_thresholds` does NOT hard-stop — it only triggers an invoice. The Cloudflare Worker MUST enforce the cap app-side **before every premium API call** via Durable Object counters. Architecture spec'd in `WORKER-SPEC.md`.
+
+### Why this pricing (one-liner)
+
+Fastr-than-Wispr at half the price, with a free tier that actually works and a lifetime option that respects you. Not because we're charitable — because the math at Groq + Anthropic Haiku 4.5 makes it work.
+
+## Monetization Architecture
+
+All paid-tier traffic flows through a Cloudflare Worker at `api.funbutton.ai`. The desktop app holds a license JWT in macOS Keychain and authenticates every premium request. The Worker enforces caps app-side, routes to Groq/Anthropic/OpenAI, logs usage to D1, and posts metered usage records to Stripe.
+
+**Full implementation spec — endpoints, KV/D1 schema, Stripe products, hot-path pseudocode, 7-day ship plan — lives in `WORKER-SPEC.md`. The Week 2 coding agent works from that file.**
+
+Desktop app (open source, GPLv3) talks to Worker (closed source, our infra). This is the open-core split previously called out in the V2 backlog — it ships in V1.1 because pricing requires it.
 
 ---
 

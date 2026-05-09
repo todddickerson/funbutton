@@ -2,6 +2,23 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-05-09 11:54 — Pricing locked + Worker spec'd
+
+**Done:**
+- Validated pricing via deep research (`PRICING-RESEARCH.md`, 40 sources, commit b35428d)
+- Locked Pro $9/mo or $79/yr, Lifetime $149 → $199 → $249 ladder, Haiku 4.5 as premium default ($0.40/10K words, ~78 % margin)
+- Sonnet 4.7 ($0.60), Opus 4.7 ($0.99), GPT-4.1 ($0.50) as premium options
+- 50K included premium words/mo on Pro; Lifetime is pay-as-you-go above Groq fast tier
+- Auto top-up: $20 default cap, $0–$100 slider, opt-in OFF by default (ROSCA + California ARL safe)
+- `PRD.md` updated with validated tiers + compliance UI requirements + monetization architecture pointer
+- `WORKER-SPEC.md` written for Week 2 monetization sprint — endpoints, KV/DO/D1 schema, Stripe products, hot-path TS pseudocode, day-by-day 7-day ship plan
+- Critical implementation note documented: Stripe `billing_thresholds` does NOT hard-stop — Worker MUST enforce caps app-side via Durable Object counters before every premium API call
+
+**Next:** Sprint 2 desktop features continue this weekend (modes, dictionary, history). Week 2 (V1.1) coding agent will build the Cloudflare Worker from `WORKER-SPEC.md`.
+
+**Blocked:** none.
+
+
 ---
 
 ## 2026-05-09 01:34 — Onboarding wizard shipped (Linear/Raycast-grade)
