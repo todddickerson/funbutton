@@ -1,0 +1,123 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "funbutton-api"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+account_id = "e03523c149209369c46ebc10b8a30b43"
+
+# Monthly reset cron — 00:00 UTC on the 1st.
+[triggers]
+crons = ["0 0 1 * *"]
+
+# -------- Durable Objects --------
+[[durable_objects.bindings]]
+name = "USAGE_DO"
+class_name = "UsageCounter"
+
+[[durable_objects.bindings]]
+name = "LIFETIME_COUNTER"
+class_name = "LifetimeCounter"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["UsageCounter", "LifetimeCounter"]
+
+# -------- KV namespaces (production) --------
+# Replace placeholder IDs after `pnpm wrangler kv namespace create LICENSE_KV` etc.
+[[kv_namespaces]]
+binding = "LICENSE_KV"
+id = "REPLACE_LICENSE_KV_ID"
+
+[[kv_namespaces]]
+binding = "USAGE_KV"
+id = "REPLACE_USAGE_KV_ID"
+
+[[kv_namespaces]]
+binding = "CAP_KV"
+id = "REPLACE_CAP_KV_ID"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "REPLACE_RATE_LIMIT_KV_ID"
+
+# -------- D1 database --------
+[[d1_databases]]
+binding = "D1_DATABASE"
+database_name = "funbutton-prod"
+database_id = "REPLACE_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+# Production: routed to api.funbutton.ai (after domain custom-route setup).
+[env.production]
+name = "funbutton-api"
+
+[[env.production.routes]]
+pattern = "api.funbutton.ai/*"
+zone_name = "funbutton.ai"
+
+[[env.production.durable_objects.bindings]]
+name = "USAGE_DO"
+class_name = "UsageCounter"
+
+[[env.production.durable_objects.bindings]]
+name = "LIFETIME_COUNTER"
+class_name = "LifetimeCounter"
+
+[[env.production.kv_namespaces]]
+binding = "LICENSE_KV"
+id = "REPLACE_LICENSE_KV_ID"
+
+[[env.production.kv_namespaces]]
+binding = "USAGE_KV"
+id = "REPLACE_USAGE_KV_ID"
+
+[[env.production.kv_namespaces]]
+binding = "CAP_KV"
+id = "REPLACE_CAP_KV_ID"
+
+[[env.production.kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "REPLACE_RATE_LIMIT_KV_ID"
+
+[[env.production.d1_databases]]
+binding = "D1_DATABASE"
+database_name = "funbutton-prod"
+database_id = "REPLACE_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+# Staging — *.workers.dev for smoke tests before flipping production.
+[env.staging]
+name = "funbutton-api-staging"
+
+[[env.staging.durable_objects.bindings]]
+name = "USAGE_DO"
+class_name = "UsageCounter"
+
+[[env.staging.durable_objects.bindings]]
+name = "LIFETIME_COUNTER"
+class_name = "LifetimeCounter"
+
+[[env.staging.kv_namespaces]]
+binding = "LICENSE_KV"
+id = "REPLACE_LICENSE_KV_ID"
+
+[[env.staging.kv_namespaces]]
+binding = "USAGE_KV"
+id = "REPLACE_USAGE_KV_ID"
+
+[[env.staging.kv_namespaces]]
+binding = "CAP_KV"
+id = "REPLACE_CAP_KV_ID"
+
+[[env.staging.kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "REPLACE_RATE_LIMIT_KV_ID"
+
+[[env.staging.d1_databases]]
+binding = "D1_DATABASE"
+database_name = "funbutton-prod"
+database_id = "REPLACE_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+[observability]
+enabled = true

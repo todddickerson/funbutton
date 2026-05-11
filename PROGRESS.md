@@ -2,6 +2,42 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-05-10 21:30 — Worker scaffold + full endpoint implementation (Week 2 Day 1–6 in one push)
+
+**Done (all in `apps/worker/`):**
+- TypeScript Worker project with Hono router. Typechecks clean.
+- `wrangler.toml` — bindings for 4 KVs (`LICENSE_KV`, `USAGE_KV`, `CAP_KV`, `RATE_LIMIT_KV`), 2 Durable Objects (`UsageCounter`, `LifetimeCounter`), D1 (`D1_DATABASE`), cron `0 0 1 * *` for monthly reset, production route `api.funbutton.ai/*`, staging env on `*.workers.dev`. CF account ID locked to `e03523c149209369c46ebc10b8a30b43`. IDs left as `REPLACE_*` placeholders pending provisioning.
+- D1 migration `migrations/0001_init.sql` — `usage_log` + `licenses` tables matching WORKER-SPEC §8.
+- **JWT (HS256)** — `src/lib/jwt.ts`, hand-rolled on Web Crypto, no npm dep. `newClaims`, `refreshClaims`, `newLicenseId`.
+- **Auth middleware** — `src/lib/auth.ts` checks signature, expiry, and `${license_id}:revoked` flag in KV.
+- **Endpoints (all under `/v1`):**
+  - `POST /license/verify` — returns tier, expiry, included words remaining, current spend, cap.
+  - `POST /license/refresh` — issues fresh 30d / 90d JWT.
+  - `POST /transcribe` — Groq Whisper Turbo proxy (≤25 MB, audio/* content types).
+  - `POST /cleanup` — full hot-path: rate limit → Pro included-words check → cap pre-check → provider call → DO counter + D1 audit log + Stripe metered usage (all fire-and-forget via `waitUntil`). Returns HTTP 402 with `{ fallback: "fast", ... }` on cap hit.
+  - `GET\|POST /usage` — dashboard data (fast words, premium words by model, spend, cap, history).
+  - `POST /usage/cap` — set monthly cap ($0–$100, clamped).
+  - `POST /checkout/create-session` — Stripe Checkout for Pro/Lifetime (subscription auto-attaches the 4 metered items).
+  - `POST /portal/portal` — Stripe Customer Portal URL.
+  - `POST /stripe/webhook` — HMAC-SHA256 signature verify, handles `checkout.session.completed` (mints JWT, persists to KV+D1, sends Resend activation email with `funbutton://activate?jwt=...`), `customer.subscription.updated`, `customer.subscription.deleted` (sets revoked flag), `invoice.paid` (extends expiry). Lifetime ladder ($149 → $199 at 1K, → $249 at 5K) wired via `LifetimeCounter` DO with atomic increment + auto `archivePrice`/`activatePrice` Stripe calls.
+- **Cap enforcement** (the Stripe gotcha) — `src/routes/cleanup.ts` checks `USAGE_DO` counter + `CAP_KV` *before* the premium provider call. Conservative `projectedCost = calcCost(input_words × 2)`. $0 cap → hard stop. Pro included quota (default 50K words/mo, counted across all premium models) checked first.
+- **Rate limit** — 50 req/min sliding window via `RATE_LIMIT_KV`, weighted-bucket approximation.
+- **Provider routing** — Groq Llama 3.3 70B for `fast`, Anthropic `claude-haiku-4-5` / `claude-sonnet-4-7` / `claude-opus-4-7` for `premium-*`, OpenAI `gpt-4.1` for `premium-gpt41`. Cleanup prompts ported verbatim from `apps/desktop/src-tauri/src/cleanup.rs` (Auto/Email/Slack/Code/Raw) + identical dictionary boost.
+- **Cron** — monthly reset iterates `LICENSE_KV.list({ limit: 1000 })`, resets each `UsageCounter` DO at 00:00 UTC on the 1st.
+- **Test license minting** — `scripts/mint-test-license.ts` (tsx-runnable), reads `JWT_SECRET` from `.dev.vars` or env.
+- **Docs** — `apps/worker/README.md` covers local dev, provisioning, deploy, endpoint table, Stripe model.
+
+**Next:**
+- Provision real CF resources (KV namespaces × 4, D1 database, secrets) — Wrangler API token is valid for `Spontent LLC` account.
+- Deploy staging worker, smoke test all endpoints with minted JWT.
+- Wire desktop app: send `Authorization: Bearer <jwt>` to `api.funbutton.ai` when a JWT is in Keychain; keep BYOK Groq direct path as fallback. Add Settings panel (license, cap slider, "Manage subscription").
+- Configure DNS `api.funbutton.ai` → workers (Spaceship → Cloudflare zone).
+
+**Blocked:**
+- **Stripe live keys not in `~/clawd/.env`.** Only `STRIPE_WEBHOOK_SECRET` is set; no `STRIPE_SECRET_KEY` / price IDs. Stripe CLI is logged into a different sandbox account ("Overskill") and the test key there has expired. **Need from Todd:** (a) create a FunButton Stripe account (or reuse Spontent), (b) create the 9 products/prices from `WORKER-SPEC.md` §7, (c) drop the resulting `sk_test_*` + 9 `STRIPE_PRICE_*` IDs into `~/clawd/.env`. Code paths return HTTP 503 `stripe_not_configured` gracefully until then; everything else (license verify/refresh, transcribe, cleanup, cap enforcement, usage) is independent of Stripe and ready to ship.
+
+---
+
 ## 2026-05-09 11:54 — Pricing locked + Worker spec'd
 
 **Done:**
