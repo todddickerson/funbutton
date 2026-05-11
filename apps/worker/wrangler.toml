@@ -26,34 +26,38 @@ new_sqlite_classes = ["UsageCounter", "LifetimeCounter"]
 # Replace placeholder IDs after `pnpm wrangler kv namespace create LICENSE_KV` etc.
 [[kv_namespaces]]
 binding = "LICENSE_KV"
-id = "REPLACE_LICENSE_KV_ID"
+id = "a980e960f6cd46878e630e81c17be956"
 
 [[kv_namespaces]]
 binding = "USAGE_KV"
-id = "REPLACE_USAGE_KV_ID"
+id = "abf2c2a96d7345e19317af5b444eb13d"
 
 [[kv_namespaces]]
 binding = "CAP_KV"
-id = "REPLACE_CAP_KV_ID"
+id = "05f21ba6465c4c7fb45cfb0fc8fa4dce"
 
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"
-id = "REPLACE_RATE_LIMIT_KV_ID"
+id = "a032c1c39d8e46b3876742b5babcbd04"
 
 # -------- D1 database --------
 [[d1_databases]]
 binding = "D1_DATABASE"
 database_name = "funbutton-prod"
-database_id = "REPLACE_D1_DATABASE_ID"
+database_id = "f42e6647-162e-4d46-b54c-5f660eaca175"
 migrations_dir = "migrations"
 
-# Production: routed to api.funbutton.ai (after domain custom-route setup).
+# Production worker. The api.funbutton.ai custom route is added by hand
+# once Todd attaches the funbutton.ai zone to this Cloudflare account
+# (currently registered at Spaceship). Until then the worker is reachable
+# at https://funbutton-api.todd-e03.workers.dev.
 [env.production]
 name = "funbutton-api"
+workers_dev = true
 
-[[env.production.routes]]
-pattern = "api.funbutton.ai/*"
-zone_name = "funbutton.ai"
+# [[env.production.routes]]
+# pattern = "api.funbutton.ai/*"
+# zone_name = "funbutton.ai"
 
 [[env.production.durable_objects.bindings]]
 name = "USAGE_DO"
@@ -65,24 +69,24 @@ class_name = "LifetimeCounter"
 
 [[env.production.kv_namespaces]]
 binding = "LICENSE_KV"
-id = "REPLACE_LICENSE_KV_ID"
+id = "a980e960f6cd46878e630e81c17be956"
 
 [[env.production.kv_namespaces]]
 binding = "USAGE_KV"
-id = "REPLACE_USAGE_KV_ID"
+id = "abf2c2a96d7345e19317af5b444eb13d"
 
 [[env.production.kv_namespaces]]
 binding = "CAP_KV"
-id = "REPLACE_CAP_KV_ID"
+id = "05f21ba6465c4c7fb45cfb0fc8fa4dce"
 
 [[env.production.kv_namespaces]]
 binding = "RATE_LIMIT_KV"
-id = "REPLACE_RATE_LIMIT_KV_ID"
+id = "a032c1c39d8e46b3876742b5babcbd04"
 
 [[env.production.d1_databases]]
 binding = "D1_DATABASE"
 database_name = "funbutton-prod"
-database_id = "REPLACE_D1_DATABASE_ID"
+database_id = "f42e6647-162e-4d46-b54c-5f660eaca175"
 migrations_dir = "migrations"
 
 # Staging — *.workers.dev for smoke tests before flipping production.
@@ -99,24 +103,24 @@ class_name = "LifetimeCounter"
 
 [[env.staging.kv_namespaces]]
 binding = "LICENSE_KV"
-id = "REPLACE_LICENSE_KV_ID"
+id = "a980e960f6cd46878e630e81c17be956"
 
 [[env.staging.kv_namespaces]]
 binding = "USAGE_KV"
-id = "REPLACE_USAGE_KV_ID"
+id = "abf2c2a96d7345e19317af5b444eb13d"
 
 [[env.staging.kv_namespaces]]
 binding = "CAP_KV"
-id = "REPLACE_CAP_KV_ID"
+id = "05f21ba6465c4c7fb45cfb0fc8fa4dce"
 
 [[env.staging.kv_namespaces]]
 binding = "RATE_LIMIT_KV"
-id = "REPLACE_RATE_LIMIT_KV_ID"
+id = "a032c1c39d8e46b3876742b5babcbd04"
 
 [[env.staging.d1_databases]]
 binding = "D1_DATABASE"
 database_name = "funbutton-prod"
-database_id = "REPLACE_D1_DATABASE_ID"
+database_id = "f42e6647-162e-4d46-b54c-5f660eaca175"
 migrations_dir = "migrations"
 
 [observability]

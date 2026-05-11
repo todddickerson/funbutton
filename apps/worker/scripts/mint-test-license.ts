@@ -9,8 +9,12 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { signJWT, newClaims, newLicenseId } from '../src/lib/jwt';
 import type { Tier } from '../src/types';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 function loadDevVars(): Record<string, string> {
   const file = path.join(__dirname, '..', '.dev.vars');

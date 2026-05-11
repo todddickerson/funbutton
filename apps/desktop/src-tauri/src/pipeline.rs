@@ -1,5 +1,6 @@
 use crate::app_detect::FrontApp;
 use crate::cleanup::{self, Mode};
+use crate::cloud::{CleanupOutcome, CloudClient};
 use crate::groq;
 use crate::ollama;
 use crate::state::{AppStateHandle, Backend, ModeOverride, Status};
@@ -13,7 +14,17 @@ pub struct PipelineResult {
 }
 
 pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<PipelineResult> {
-    let (api_key, backend, ollama_url, ollama_model, mode_override, dictionary) = {
+    let (
+        api_key,
+        backend,
+        ollama_url,
+        ollama_model,
+        mode_override,
+        dictionary,
+        license_jwt,
+        cloud_api_base,
+        premium_model,
+    ) = {
         let s = state.settings.lock();
         (
             s.groq_api_key.clone(),
@@ -22,12 +33,32 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
             s.ollama_model.clone(),
             s.mode_override,
             s.dictionary.clone(),
+            s.license_jwt.clone(),
+            s.cloud_api_base.clone(),
+            s.premium_model.clone(),
         )
     };
 
+    let cloud = (!license_jwt.is_empty())
+        .then(|| CloudClient::new(cloud_api_base.clone(), license_jwt.clone()));
+
     *state.status.lock() = Status::Transcribing;
 
-    let raw = groq::transcribe(&api_key, wav).await?;
+    // Transcribe — cloud first when license present, otherwise BYOK Groq direct.
+    let raw = if let Some(cli) = &cloud {
+        match cli.transcribe(wav.clone()).await {
+            Ok(t) => t,
+            Err(e) => {
+                log::warn!("cloud transcribe failed, falling back to BYOK groq: {e:#}");
+                if api_key.is_empty() {
+                    return Err(e);
+                }
+                groq::transcribe(&api_key, wav).await?
+            }
+        }
+    } else {
+        groq::transcribe(&api_key, wav).await?
+    };
     *state.last_transcript.lock() = raw.clone();
 
     let mode = match mode_override {
@@ -64,7 +95,45 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
 
     *state.status.lock() = Status::Cleaning;
 
-    // Determine cleanup backend
+    // Cloud cleanup path: tries preferred premium model, silently falls back
+    // to fast tier on HTTP 402 (cap exceeded). Worker enforces caps + rate limit.
+    if let Some(cli) = &cloud {
+        let cloud_mode = mode_label;
+        match cli
+            .cleanup(&premium_model, &raw, cloud_mode, &dictionary)
+            .await
+        {
+            Ok(CleanupOutcome::Ok { text, .. }) => {
+                let cleaned = post_process(text);
+                return Ok(PipelineResult {
+                    raw,
+                    cleaned,
+                    mode: mode_label,
+                    backend_used: "cloud",
+                });
+            }
+            Ok(CleanupOutcome::CapExceeded) => {
+                log::info!("cloud cap exceeded — falling back to fast tier on cloud");
+                if let Ok(CleanupOutcome::Ok { text, .. }) =
+                    cli.cleanup("fast", &raw, cloud_mode, &dictionary).await
+                {
+                    let cleaned = post_process(text);
+                    return Ok(PipelineResult {
+                        raw,
+                        cleaned,
+                        mode: mode_label,
+                        backend_used: "cloud-fallback",
+                    });
+                }
+                log::warn!("cloud fast fallback failed; trying BYOK groq next");
+            }
+            Err(e) => {
+                log::warn!("cloud cleanup failed, falling back to BYOK groq: {e:#}");
+            }
+        }
+    }
+
+    // BYOK path (or final fallback) — unchanged behavior.
     let local_available = match backend {
         Backend::Local => true,
         Backend::Auto => ollama::is_available(&ollama_url).await,

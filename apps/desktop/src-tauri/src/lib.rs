@@ -1,6 +1,7 @@
 mod app_detect;
 mod audio;
 mod cleanup;
+mod cloud;
 mod fn_hotkey;
 mod groq;
 mod history;
@@ -185,6 +186,53 @@ fn open_system_settings_panel(panel: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Verify a FunButton license JWT against the Worker.
+/// Returns the verify response so the UI can show tier / cap / usage.
+#[tauri::command]
+async fn validate_license(
+    state: tauri::State<'_, AppStateHandle>,
+    jwt: String,
+) -> Result<serde_json::Value, String> {
+    let trimmed = jwt.trim();
+    if trimmed.is_empty() {
+        return Err("empty jwt".into());
+    }
+    let base = state.settings.lock().cloud_api_base.clone();
+    let cli = crate::cloud::CloudClient::new(base, trimmed.to_string());
+    let resp = cli.verify_license().await.map_err(|e| e.to_string())?;
+    serde_json::to_value(resp).map_err(|e| e.to_string())
+}
+
+/// Update the monthly cap (cents) via the Worker. Requires `license_jwt`.
+#[tauri::command]
+async fn set_cap_cents(
+    state: tauri::State<'_, AppStateHandle>,
+    cap_cents: u64,
+) -> Result<(), String> {
+    let (base, jwt) = {
+        let s = state.settings.lock();
+        (s.cloud_api_base.clone(), s.license_jwt.clone())
+    };
+    if jwt.is_empty() {
+        return Err("no license".into());
+    }
+    let client = reqwest::Client::new();
+    let url = format!("{}/v1/usage/cap", base.trim_end_matches('/'));
+    let resp = client
+        .post(url)
+        .bearer_auth(jwt)
+        .json(&serde_json::json!({ "cap_cents": cap_cents }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("{}: {}", status, body));
+    }
+    Ok(())
+}
+
 /// Validate a Groq API key by hitting GET /v1/models. Returns (ok, message).
 #[tauri::command]
 async fn validate_groq_key(key: String) -> Result<bool, String> {
@@ -347,6 +395,8 @@ pub fn run() {
             close_onboarding,
             open_system_settings_panel,
             validate_groq_key,
+            validate_license,
+            set_cap_cents,
             history_list,
             history_copy,
             history_purge_now,

@@ -79,8 +79,21 @@ pub struct Settings {
     pub history_retention_days: u32,
     #[serde(default)]
     pub onboarded: bool,
+    /// License JWT for the paid cloud tier. When set, transcribe + cleanup
+    /// route through `cloud_api_base` instead of BYOK Groq direct.
+    /// Empty string = BYOK mode (default).
+    #[serde(default)]
+    pub license_jwt: String,
+    #[serde(default = "default_cloud_api_base")]
+    pub cloud_api_base: String,
+    /// Preferred premium model when license is active. Persisted across runs.
+    /// Values: "fast" | "premium-haiku" | "premium-sonnet" | "premium-opus" | "premium-gpt41"
+    #[serde(default = "default_premium_model")]
+    pub premium_model: String,
 }
 
+fn default_cloud_api_base() -> String { "https://api.funbutton.ai".to_string() }
+fn default_premium_model() -> String { "premium-haiku".to_string() }
 fn default_retention_days() -> u32 { 30 }
 
 fn default_ollama_model() -> String { "qwen2.5:1.5b".to_string() }
@@ -105,6 +118,9 @@ impl Default for Settings {
             dictionary: Vec::new(),
             history_retention_days: default_retention_days(),
             onboarded: false,
+            license_jwt: String::new(),
+            cloud_api_base: default_cloud_api_base(),
+            premium_model: default_premium_model(),
         }
     }
 }

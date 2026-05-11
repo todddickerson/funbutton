@@ -2,6 +2,45 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-05-10 21:45 — Worker deployed (staging + production) + desktop wired
+
+**Deployed:**
+- **Staging:** https://funbutton-api-staging.todd-e03.workers.dev (Spontent LLC CF account)
+- **Production:** https://funbutton-api.todd-e03.workers.dev (workers.dev URL — `api.funbutton.ai` route pending DNS)
+- All 4 KV namespaces, D1 database `funbutton-prod`, both Durable Objects, monthly reset cron are live in production.
+- All secrets pushed to both environments (JWT_SECRET, GROQ/Anthropic/OpenAI/Resend API keys, STRIPE_WEBHOOK_SECRET).
+
+**Smoke tests passed (against staging worker, pro_annual JWT):**
+- `GET /health` → `{"ok":true}` ✅
+- `POST /v1/license/verify` → tier, expiry, included words, cap surfaced ✅
+- `POST /v1/license/refresh` → fresh 30-day JWT returned ✅
+- `POST /v1/cleanup` fast → `"we should probably ship the worker today"` (input had 8 fillers stripped) ✅
+- `POST /v1/cleanup` premium-haiku → 1¢ recorded ✅
+- `POST /v1/cleanup` w/ cap=0 on Lifetime tier → **HTTP 402 `{"fallback":"fast","reason":"cap_exceeded",...}`** exactly per spec ✅
+- 50 req/min sliding-window rate limit → 429s fire under burst ✅
+- D1 audit log → 36 rows recorded fire-and-forget ✅
+- Bad JWT → 401 ✅
+- Production worker passed identical end-to-end test (`"we shipped the worker today 👍"`) ✅
+
+**Desktop client wired (`apps/desktop`):**
+- New module `src-tauri/src/cloud.rs` — HTTP client for `/v1/transcribe`, `/v1/cleanup`, `/v1/license/verify`. Handles HTTP 402 cap-exceeded by exposing `CleanupOutcome::CapExceeded` so the caller can silently retry on fast tier.
+- `src-tauri/src/pipeline.rs` rewritten: when `settings.license_jwt` is set, transcribe + cleanup route through the Worker. On any cloud failure (network, 5xx, cap exceeded → fast retry also fails) it transparently falls back to the existing BYOK Groq direct path. **Free-tier BYOK behavior is byte-for-byte unchanged when `license_jwt` is empty.**
+- `state::Settings` gains `license_jwt`, `cloud_api_base` (default `https://api.funbutton.ai`), `premium_model` (default `premium-haiku`).
+- New Tauri commands: `validate_license` (verifies a JWT against the Worker, returns tier/usage/cap), `set_cap_cents` (writes the monthly cap via `POST /v1/usage/cap`).
+- `cargo check` clean. The existing `save_settings` command already accepts the full Settings struct so the React frontend can persist a pasted JWT today without further Rust changes.
+
+**Remaining work (Day 7 polish — not blocking):**
+- Settings UI: License panel (tier, expiry, included words remaining, spend, "Manage subscription"), cap slider ($0–$100), auto top-up activation disclosure modal, cap-hit toast.
+- `funbutton://activate?jwt=...` URL scheme handler — currently the user pastes JWT into Settings manually.
+- Stripe Customer Portal integration end-to-end (Worker has `/v1/portal/portal`, frontend needs the button).
+- Landing page pricing buttons → `/v1/checkout/create-session`.
+- DNS: Todd needs to either move `funbutton.ai` zone to Spontent LLC's Cloudflare account, or proxy api.funbutton.ai via a CNAME after adding the zone. Worker is live on `*.workers.dev` in the meantime.
+
+**Blocked:**
+- **Stripe live keys still needed.** Webhook signature verification works (whsec_ is set), but `STRIPE_SECRET_KEY` and the 9 `STRIPE_PRICE_*` IDs are not in `~/clawd/.env`. Stripe code paths return 503 `stripe_not_configured` gracefully. Todd needs to create FunButton products in Stripe per `WORKER-SPEC.md` §7 and run `wrangler secret put STRIPE_SECRET_KEY --env production` (+ the 9 price IDs).
+
+---
+
 ## 2026-05-10 21:30 — Worker scaffold + full endpoint implementation (Week 2 Day 1–6 in one push)
 
 **Done (all in `apps/worker/`):**
