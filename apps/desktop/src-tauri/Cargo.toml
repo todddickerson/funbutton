@@ -24,6 +24,7 @@ tauri-plugin-autostart = "=2.5.1"
 tauri-plugin-global-shortcut = "=2.3.1"
 tauri-plugin-notification = "=2.3.3"
 tauri-plugin-macos-permissions = "=2.3.0"
+tauri-plugin-deep-link = "=2.4.9"
 
 # local-only history archive
 rusqlite = { version = "=0.39.0", features = ["bundled"] }

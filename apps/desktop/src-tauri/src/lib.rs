@@ -259,6 +259,34 @@ async fn validate_groq_key(key: String) -> Result<bool, String> {
     }
 }
 
+/// Parse `funbutton://activate?jwt=<token>` and return the JWT, or None if the
+/// URL doesn't match the activation scheme. Accepts both query-string and
+/// fragment forms; tolerant of trailing whitespace.
+fn parse_activation_jwt(url: &str) -> Option<String> {
+    let trimmed = url.trim();
+    let after_scheme = trimmed.strip_prefix("funbutton://")?;
+    // Support both "activate?jwt=..." and "activate/?jwt=..." plus fragment.
+    let (path, query) = match after_scheme.split_once('?') {
+        Some((p, q)) => (p, q),
+        None => return None,
+    };
+    let path_trim = path.trim_end_matches('/');
+    if path_trim != "activate" {
+        return None;
+    }
+    for pair in query.split('&') {
+        let mut parts = pair.splitn(2, '=');
+        let key = parts.next().unwrap_or("");
+        let val = parts.next().unwrap_or("");
+        if key == "jwt" && !val.is_empty() {
+            // URL decode minimally (Tauri delivers raw URLs; JWT is base64url-safe
+            // and has no chars requiring percent-encoding, so plain trim suffices).
+            return Some(val.trim().to_string());
+        }
+    }
+    None
+}
+
 fn settings_path() -> std::path::PathBuf {
     let mut p = dirs_home();
     p.push(".funbutton");
@@ -351,6 +379,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_macos_permissions::init())
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -411,6 +440,43 @@ pub fn run() {
             if let Some(w) = app.get_webview_window("settings") {
                 let _ = w.hide();
             }
+
+            // Deep-link handler — funbutton://activate?jwt=<...> activates a license.
+            // Triggered both when the app is already running (URL opens current process)
+            // and on cold-launch (URL is delivered via on_open_url at startup).
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let state_dl = Arc::clone(&app_state);
+                let app_dl = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        log::info!("deep-link received: {url}");
+                        if let Some(jwt) = parse_activation_jwt(url.as_str()) {
+                            let mut s = state_dl.settings.lock();
+                            if s.license_jwt != jwt {
+                                s.license_jwt = jwt;
+                                if let Err(e) = persist(&s) {
+                                    log::warn!("persist after deep-link failed: {e:#}");
+                                }
+                            }
+                            drop(s);
+                            if let Some(w) = app_dl.get_webview_window("settings") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                            let _ = app_dl.emit("funbutton:license-activated", ());
+                            use tauri_plugin_notification::NotificationExt;
+                            let _ = app_dl
+                                .notification()
+                                .builder()
+                                .title("FunButton license activated")
+                                .body("Premium cleanup is now enabled.")
+                                .show();
+                        }
+                    }
+                });
+            }
+
             let needs_onboarding = first_run || !app_state.settings.lock().onboarded;
             if let Some(w) = app.get_webview_window("onboarding") {
                 if needs_onboarding {

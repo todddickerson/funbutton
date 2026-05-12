@@ -146,11 +146,28 @@ function App() {
       setTab("history");
       refreshHistory();
     });
+    const unL = listen("funbutton:license-activated", () => {
+      invoke<Settings>("get_settings").then((s) => {
+        setSettings(s);
+        if (s.license_jwt) {
+          setTab("license");
+          // immediately verify against the worker
+          invoke<LicenseInfo>("validate_license", { jwt: s.license_jwt })
+            .then((info) => {
+              setLicenseInfo(info);
+              setCapDraftCents(info.cap_cents);
+              pushToast("ok", `License activated · ${info.tier.replace("_", " ")}`);
+            })
+            .catch((e) => pushToast("warn", `Activation verify failed: ${e}`));
+        }
+      });
+    });
     return () => {
       unS.then((u) => u());
       unR.then((u) => u());
       unF.then((u) => u());
       unH.then((u) => u());
+      unL.then((u) => u());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
