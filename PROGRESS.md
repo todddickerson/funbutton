@@ -2,6 +2,54 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-05-12 11:30 — Day 7 polish: License UI + deep-link + landing pricing
+
+**Settings UI (License panel)** — `apps/desktop/src/App.tsx`:
+- New "License" tab (third alongside Settings + History). Paste-to-activate JWT flow → calls `validate_license` Tauri command → live tier/expiry/included-words/cap surfaced.
+- Premium model selector (fast / Haiku / Sonnet / Opus / GPT-4.1) with per-model pricing hint.
+- Monthly cap slider $0–$100, persists via `set_cap_cents` → Worker `POST /v1/usage/cap`.
+- **ROSCA-compliant activation disclosure modal** — gates moving cap above $0 with explicit "Enable $X/mo cap" button (no dark patterns). `$0 = OFF` clearly labelled.
+- "Manage subscription" button → opens Stripe Customer Portal (Worker `POST /v1/portal/portal`).
+- "Sign out (BYOK)" button — clears `license_jwt`, returns to free tier.
+- **Cap-hit toast** — listens for `funbutton:result` events with `backend === "cloud-fallback"` (set by `pipeline.rs` when 402 cap-exceeded + fast retry succeeds). Toast: "Monthly cap hit. Switched to fast tier. Adjust in Settings → License." Auto-dismisses after 5s.
+- All new surfaces have dark-mode counterparts. Typecheck + cargo check both clean.
+
+**Deep-link handler** — `funbutton://activate?jwt=<token>`:
+- Added `tauri-plugin-deep-link@2.4.9` + capability `deep-link:default`.
+- Registered `funbutton` scheme in `tauri.conf.json`.
+- On URL receipt: parse JWT, persist to settings.json, show Settings window, switch to License tab, re-verify against Worker, fire success toast + macOS native notification.
+- `parse_activation_jwt()` handles both `activate?jwt=...` and `activate/?jwt=...`. JWT is base64url-safe, no decoding needed.
+
+**Landing page pricing** — `apps/web/app/page.tsx`:
+- New `<PricingSection />` below the hero email capture with three tier cards: Free / Pro ($79/yr or $9/mo, marked "most popular") / Lifetime ($149 founder rung).
+- Buttons POST to `/api/checkout` (Edge runtime route) → proxies to Worker `/v1/checkout/create-session` with tier name → redirects browser to Stripe Checkout.
+- Worker checkout endpoint extended to accept `tier` *or* `price_id`; resolves tier to env var. Lifetime tier auto-resolves to the lowest active ladder rung.
+- Graceful degrade: when Stripe is unconfigured (current state), the proxy returns 503 and the UI shows "Checkout opens soon — join the waitlist".
+- Next.js production build passes (`next build` clean).
+
+**DNS setup helper** — `apps/worker/scripts/setup-dns.sh`:
+- One-shot migration script. Given a CF token with `Account:Zones:Edit + Zone:Zones:Edit + Zone:DNS:Edit` scopes (the existing tokens in `~/clawd/.env` lack `Zones:Edit`), the script:
+  1. Adds `funbutton.ai` zone to Spontent CF account
+  2. Pre-creates the existing Vercel A records (DNS-only / gray cloud, preserves landing page TLS)
+  3. Updates Spaceship NS via their API → CF NS
+  4. Polls for zone-active status (max 10 min)
+  5. Attaches `api.funbutton.ai` as a Worker custom domain on `funbutton-api`
+  6. Smoke tests `https://api.funbutton.ai/health`
+- Idempotent — safe to re-run after partial failure.
+- Desktop default `cloud_api_base` is currently `https://funbutton-api.todd-e03.workers.dev`; flip to `https://api.funbutton.ai` once DNS is live.
+
+**Deploys:**
+- Production Worker redeployed (`Current Version ID: 1f59bccc-0813-4a2a-9908-e38613a4f252`) with tier-aware checkout.
+- Smoke tested: `POST /v1/checkout/create-session {"tier":"pro_annual"}` → 503 `stripe_not_configured` (expected; Stripe not wired yet).
+
+**Blocked (unchanged from last entry):**
+- **Stripe live keys** — need `STRIPE_SECRET_KEY` + 9 `STRIPE_PRICE_*` IDs in `~/clawd/.env` so the Worker can call Stripe. Until then: landing page CTAs show "Checkout opens soon", desktop License tab still works for any externally-minted JWT, and Worker webhook signature verification is alive (just no events flowing).
+- **CF zone create permission** — `CF_API_TOKEN` and `CLOUDFLARE_WORKERS_API_TOKEN` lack `Account:Zones:Edit`. Either:
+  - Mint a new CF token at dash.cloudflare.com → My Profile → API Tokens with the "Edit zone" template + add `Account → Zones → Edit`, then run `bash apps/worker/scripts/setup-dns.sh`, or
+  - One-click "Add a Site" in the CF dashboard for `funbutton.ai`, then re-enable the route in `wrangler.toml` and `wrangler deploy --env production`.
+
+---
+
 ## 2026-05-10 21:45 — Worker deployed (staging + production) + desktop wired
 
 **Deployed:**

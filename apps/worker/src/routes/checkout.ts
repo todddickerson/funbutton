@@ -8,22 +8,53 @@ import {
   proTierFromPriceId,
 } from '../lib/stripe';
 
+function resolveTierPriceId(env: Env, tier: string): string {
+  switch (tier) {
+    case 'pro_monthly':
+      return env.STRIPE_PRICE_PRO_MONTHLY || '';
+    case 'pro_annual':
+      return env.STRIPE_PRICE_PRO_ANNUAL || '';
+    case 'lifetime_149':
+      return env.STRIPE_PRICE_LIFETIME_149 || '';
+    case 'lifetime_199':
+      return env.STRIPE_PRICE_LIFETIME_199 || '';
+    case 'lifetime_249':
+      return env.STRIPE_PRICE_LIFETIME_249 || '';
+    case 'lifetime':
+      // Resolve to the lowest active rung. (Ladder is enforced by archive
+      // in the webhook handler; here we just pick the first non-empty.)
+      return (
+        env.STRIPE_PRICE_LIFETIME_149 ||
+        env.STRIPE_PRICE_LIFETIME_199 ||
+        env.STRIPE_PRICE_LIFETIME_249 ||
+        ''
+      );
+    default:
+      return '';
+  }
+}
+
 const app = new Hono<{ Bindings: Env }>();
 
 // Unauthenticated: brand-new user buying their first license.
-// Authenticated optional — if they pass a JWT we can prefill email.
+// Accepts either `price_id` (raw Stripe price) or `tier` (one of:
+// pro_monthly, pro_annual, lifetime). The lifetime tier auto-resolves to the
+// currently-active ladder rung price configured on the Worker.
 app.post('/create-session', async (c) => {
   if (!c.env.STRIPE_SECRET_KEY) {
     return c.json({ error: 'stripe_not_configured' }, 503);
   }
-  let body: { price_id?: string; email?: string };
+  let body: { price_id?: string; tier?: string; email?: string };
   try {
     body = await c.req.json();
   } catch {
     return c.json({ error: 'invalid_json' }, 400);
   }
-  const priceId = body.price_id ?? '';
-  if (!priceId) return c.json({ error: 'missing_price_id' }, 400);
+  let priceId = body.price_id ?? '';
+  if (!priceId && body.tier) {
+    priceId = resolveTierPriceId(c.env, body.tier);
+  }
+  if (!priceId) return c.json({ error: 'missing_price_or_tier' }, 400);
 
   const proTier = proTierFromPriceId(c.env, priceId);
   const lifetimeTier = lifetimeTierFromPriceId(c.env, priceId);

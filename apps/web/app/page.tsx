@@ -115,6 +115,8 @@ export default function ComingSoon() {
         </p>
       </section>
 
+      <PricingSection />
+
       {/* footer */}
       <footer className="absolute bottom-6 left-0 right-0 px-6 font-mono text-[10px] text-neutral-600 flex flex-wrap justify-between gap-2">
         <span>© 2026 — no trackers on this page.</span>
@@ -123,6 +125,203 @@ export default function ComingSoon() {
         </span>
       </footer>
     </main>
+  );
+}
+
+function PricingSection() {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  async function buy(tier: string) {
+    setBusy(tier);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tier }),
+      });
+      if (res.status === 503) {
+        setNotice("Checkout opens soon — join the waitlist above and we'll email you the moment it goes live.");
+        return;
+      }
+      if (!res.ok) {
+        setNotice("Checkout temporarily unavailable. Try again in a minute.");
+        return;
+      }
+      const json = (await res.json()) as { url?: string };
+      if (json.url) {
+        window.location.href = json.url;
+      } else {
+        setNotice("Checkout temporarily unavailable.");
+      }
+    } catch {
+      setNotice("Network error. Try again.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <section id="pricing" className="max-w-5xl mx-auto px-6 pb-24">
+      <p className="font-mono text-xs uppercase tracking-[0.2em] text-red-400 mb-3">
+        ▌ pricing
+      </p>
+      <h2 className="text-3xl sm:text-4xl font-bold tracking-tight leading-tight mb-2">
+        Pay once. Pay monthly. Or don&apos;t pay at all.
+      </h2>
+      <p className="text-neutral-400 max-w-2xl mb-10 leading-relaxed">
+        Free forever on Groq BYOK or local Ollama. Pro adds premium cleanup models and 50K
+        words/mo included. Lifetime is one-time and never goes up after we hit the next ladder rung.
+      </p>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <PriceCard
+          tier="free"
+          name="Free"
+          price="$0"
+          period="forever"
+          features={[
+            "Unlimited usage on your own Groq key",
+            "Or fully local via Ollama",
+            "GPLv3 — open source desktop",
+            "No cap, no card, no cloud lock-in",
+          ]}
+          cta="Download alpha"
+          ctaHref="https://github.com/todddickerson/funbutton/releases"
+          ctaTarget="_blank"
+        />
+        <PriceCard
+          tier="pro_annual"
+          name="Pro"
+          price="$79"
+          period="/yr"
+          subPrice="or $9/mo"
+          features={[
+            "50K premium cleanup words/mo (Haiku 4.5)",
+            "Sonnet, Opus, GPT-4.1 selectable",
+            "Metered overage with user-set cap",
+            "Auto top-up OFF by default",
+          ]}
+          cta={busy === "pro_annual" ? "…" : "Get Pro"}
+          onCta={() => buy("pro_annual")}
+          highlight
+        />
+        <PriceCard
+          tier="lifetime"
+          name="Lifetime"
+          price="$149"
+          period="once"
+          subPrice="first 1,000 customers"
+          features={[
+            "Groq fast tier unlimited forever",
+            "Premium cleanup pay-as-you-go",
+            "Price climbs to $199 then $249",
+            "No recurring charges on the base",
+          ]}
+          cta={busy === "lifetime" ? "…" : "Get Lifetime"}
+          onCta={() => buy("lifetime")}
+        />
+      </div>
+
+      {notice && (
+        <p className="mt-6 text-sm font-mono text-amber-400">
+          {notice}
+        </p>
+      )}
+
+      <p className="mt-8 font-mono text-xs text-neutral-600 max-w-2xl">
+        Premium models priced per 10K words: Haiku $0.40 · Sonnet $0.60 · Opus $0.99 · GPT-4.1 $0.50.
+        Cap defaults to $0 (hard stop, fast-tier fallback). You can raise the cap up to $100/mo at any time.
+      </p>
+    </section>
+  );
+}
+
+interface PriceCardProps {
+  tier: string;
+  name: string;
+  price: string;
+  period: string;
+  subPrice?: string;
+  features: string[];
+  cta: string;
+  ctaHref?: string;
+  ctaTarget?: string;
+  onCta?: () => void;
+  highlight?: boolean;
+}
+
+function PriceCard({
+  name,
+  price,
+  period,
+  subPrice,
+  features,
+  cta,
+  ctaHref,
+  ctaTarget,
+  onCta,
+  highlight,
+}: PriceCardProps) {
+  const ringClass = highlight
+    ? "border-red-500/60 shadow-[0_0_24px_rgba(239,68,68,0.15)]"
+    : "border-neutral-800";
+
+  return (
+    <div className={`rounded-lg border ${ringClass} bg-neutral-950/50 p-6 flex flex-col`}>
+      <div className="flex items-baseline justify-between mb-1">
+        <h3 className="text-lg font-bold">{name}</h3>
+        {highlight && (
+          <span className="font-mono text-[10px] uppercase tracking-wider text-red-400">
+            most popular
+          </span>
+        )}
+      </div>
+      <div className="flex items-baseline gap-1 mb-1">
+        <span className="text-3xl font-bold">{price}</span>
+        <span className="text-neutral-500 text-sm">{period}</span>
+      </div>
+      {subPrice && (
+        <p className="font-mono text-xs text-neutral-500 mb-4">{subPrice}</p>
+      )}
+      {!subPrice && <div className="mb-4" />}
+
+      <ul className="space-y-2 mb-6 flex-1">
+        {features.map((f) => (
+          <li key={f} className="text-sm text-neutral-300 flex gap-2">
+            <span className="text-red-400 mt-0.5">→</span>
+            <span>{f}</span>
+          </li>
+        ))}
+      </ul>
+
+      {ctaHref ? (
+        <a
+          href={ctaHref}
+          target={ctaTarget}
+          rel={ctaTarget === "_blank" ? "noopener noreferrer" : undefined}
+          className={`w-full text-center px-4 py-2.5 rounded-md font-mono text-sm font-bold transition ${
+            highlight
+              ? "bg-red-500 hover:bg-red-400 text-black"
+              : "border border-neutral-700 hover:border-red-500/60 hover:text-red-300 text-neutral-200"
+          }`}
+        >
+          {cta}
+        </a>
+      ) : (
+        <button
+          onClick={onCta}
+          className={`w-full text-center px-4 py-2.5 rounded-md font-mono text-sm font-bold transition ${
+            highlight
+              ? "bg-red-500 hover:bg-red-400 text-black"
+              : "border border-neutral-700 hover:border-red-500/60 hover:text-red-300 text-neutral-200"
+          }`}
+        >
+          {cta}
+        </button>
+      )}
+    </div>
   );
 }
 
