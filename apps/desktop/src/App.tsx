@@ -7,6 +7,8 @@ type Backend = "auto" | "groq" | "local";
 type ModeOverride = "auto" | "code" | "email" | "slack" | "raw";
 type HotkeyKind = "fn" | "right_option";
 
+type PremiumModel = "fast" | "premium-haiku" | "premium-sonnet" | "premium-opus" | "premium-gpt41";
+
 interface Settings {
   groq_api_key: string;
   backend: Backend;
@@ -19,6 +21,19 @@ interface Settings {
   mode_override: ModeOverride;
   dictionary: string[];
   history_retention_days: number;
+  onboarded: boolean;
+  license_jwt: string;
+  cloud_api_base: string;
+  premium_model: PremiumModel;
+}
+
+interface LicenseInfo {
+  valid: boolean;
+  tier: string;
+  expires_at: number;
+  included_premium_words: number;
+  words_used_this_month: number;
+  cap_cents: number;
 }
 
 interface ResultPayload {
@@ -41,7 +56,13 @@ interface HistoryEntry {
   model_used: string;
 }
 
-type Tab = "settings" | "history";
+type Tab = "settings" | "history" | "license";
+
+interface Toast {
+  id: number;
+  kind: "info" | "warn" | "ok";
+  text: string;
+}
 
 const RETENTION_OPTIONS: { label: string; days: number }[] = [
   { label: "7 days", days: 7 },
@@ -63,6 +84,20 @@ function App() {
   const [historyMode, setHistoryMode] = useState<string>("all");
   const [lastFailed, setLastFailed] = useState<HistoryEntry | null>(null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  // License state
+  const [licenseInfo, setLicenseInfo] = useState<LicenseInfo | null>(null);
+  const [licenseDraftJwt, setLicenseDraftJwt] = useState<string>("");
+  const [licenseValidating, setLicenseValidating] = useState(false);
+  const [licenseError, setLicenseError] = useState<string | null>(null);
+  const [capDraftCents, setCapDraftCents] = useState<number>(2000);
+  const [showCapDisclosure, setShowCapDisclosure] = useState(false);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  function pushToast(kind: Toast["kind"], text: string) {
+    const id = Date.now() + Math.random();
+    setToasts((t) => [...t, { id, kind, text }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 5000);
+  }
 
   async function refreshHistory() {
     try {
@@ -97,6 +132,12 @@ function App() {
       setLast(e.payload);
       invoke<Settings>("get_settings").then(setSettings);
       refreshHistory();
+      if (e.payload.backend === "cloud-fallback") {
+        pushToast(
+          "warn",
+          "Monthly cap hit. Switched to fast tier. Adjust in Settings → License."
+        );
+      }
     });
     const unF = listen("funbutton:paste-failed", () => {
       refreshHistory();
@@ -132,6 +173,85 @@ function App() {
     setSaved(true);
     setTimeout(() => setSaved(false), 1400);
   }
+
+  // -------- License --------
+  async function validateLicense(jwt: string) {
+    setLicenseValidating(true);
+    setLicenseError(null);
+    try {
+      const info = await invoke<LicenseInfo>("validate_license", { jwt });
+      setLicenseInfo(info);
+      setCapDraftCents(info.cap_cents);
+      // Persist to settings so the pipeline picks it up.
+      if (settings) {
+        const next = { ...settings, license_jwt: jwt };
+        setSettings(next);
+        await invoke("save_settings", { settings: next });
+      }
+      pushToast("ok", `License active · ${info.tier.replace("_", " ")}`);
+    } catch (e) {
+      setLicenseError(String(e));
+      setLicenseInfo(null);
+    } finally {
+      setLicenseValidating(false);
+    }
+  }
+
+  async function refreshLicense() {
+    if (!settings?.license_jwt) {
+      setLicenseInfo(null);
+      return;
+    }
+    try {
+      const info = await invoke<LicenseInfo>("validate_license", {
+        jwt: settings.license_jwt,
+      });
+      setLicenseInfo(info);
+      setCapDraftCents(info.cap_cents);
+    } catch (e) {
+      console.warn("license refresh failed", e);
+    }
+  }
+
+  async function commitCap(cents: number) {
+    try {
+      await invoke("set_cap_cents", { capCents: cents });
+      pushToast("ok", cents === 0 ? "Auto top-up disabled" : `Cap set to $${(cents / 100).toFixed(0)}/mo`);
+      refreshLicense();
+    } catch (e) {
+      pushToast("warn", `Cap update failed: ${e}`);
+    }
+  }
+
+  async function openPortal() {
+    if (!settings?.license_jwt) return;
+    try {
+      const base = settings.cloud_api_base.replace(/\/+$/, "");
+      const res = await fetch(`${base}/v1/portal/portal`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${settings.license_jwt}` },
+      });
+      if (!res.ok) {
+        pushToast("warn", `Portal unavailable (${res.status})`);
+        return;
+      }
+      const json = (await res.json()) as { url?: string };
+      if (json.url) {
+        await invoke("plugin:opener|open_url", { url: json.url }).catch(() => {
+          // fallback: best-effort window.open
+          window.open(json.url, "_blank");
+        });
+      }
+    } catch (e) {
+      pushToast("warn", `Portal failed: ${e}`);
+    }
+  }
+
+  // refresh license info when the tab opens or the JWT changes
+  useEffect(() => {
+    if (tab === "license") refreshLicense();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, settings?.license_jwt]);
 
   async function copyEntry(id: number) {
     try {
@@ -171,6 +291,10 @@ function App() {
         <button className={`fb-tab ${tab === "history" ? "on" : ""}`} onClick={() => { setTab("history"); refreshHistory(); }}>
           history
           {lastFailed && <span className="fb-tab-pill">!</span>}
+        </button>
+        <button className={`fb-tab ${tab === "license" ? "on" : ""}`} onClick={() => setTab("license")}>
+          license
+          {licenseInfo && <span className="fb-tab-pill ok">●</span>}
         </button>
       </div>
 
@@ -340,6 +464,43 @@ function App() {
             v0.1.0 · GPLv3 · <a href="https://github.com/todddickerson/funbutton" target="_blank" rel="noreferrer">github</a>
           </footer>
         </div>
+      ) : tab === "license" ? (
+        <LicensePanel
+          settings={settings}
+          info={licenseInfo}
+          validating={licenseValidating}
+          error={licenseError}
+          draftJwt={licenseDraftJwt}
+          setDraftJwt={setLicenseDraftJwt}
+          onValidate={() => validateLicense(licenseDraftJwt.trim())}
+          onClear={async () => {
+            if (!settings) return;
+            const next: Settings = { ...settings, license_jwt: "" };
+            setSettings(next);
+            await invoke("save_settings", { settings: next });
+            setLicenseInfo(null);
+            setLicenseDraftJwt("");
+            pushToast("info", "License cleared. Back to BYOK mode.");
+          }}
+          capDraftCents={capDraftCents}
+          setCapDraftCents={(c) => {
+            // If moving from $0 to >$0, gate behind disclosure.
+            if ((licenseInfo?.cap_cents ?? 0) === 0 && c > 0) {
+              setCapDraftCents(c);
+              setShowCapDisclosure(true);
+            } else {
+              setCapDraftCents(c);
+            }
+          }}
+          onCommitCap={() => commitCap(capDraftCents)}
+          onChangePremiumModel={async (m) => {
+            if (!settings) return;
+            const next: Settings = { ...settings, premium_model: m };
+            setSettings(next);
+            await invoke("save_settings", { settings: next });
+          }}
+          onOpenPortal={openPortal}
+        />
       ) : (
         // history tab
         <div className="fb-form">
@@ -407,7 +568,232 @@ function App() {
           </footer>
         </div>
       )}
+
+      {showCapDisclosure && (
+        <CapDisclosureModal
+          capCents={capDraftCents}
+          onEnable={async () => {
+            setShowCapDisclosure(false);
+            await commitCap(capDraftCents);
+          }}
+          onCancel={() => {
+            setShowCapDisclosure(false);
+            setCapDraftCents(0);
+          }}
+        />
+      )}
+
+      <div className="fb-toast-rail">
+        {toasts.map((t) => (
+          <div key={t.id} className={`fb-toast fb-toast-${t.kind}`}>{t.text}</div>
+        ))}
+      </div>
     </main>
+  );
+}
+
+// -------------------- License panel + Cap disclosure --------------------
+
+interface LicensePanelProps {
+  settings: Settings;
+  info: LicenseInfo | null;
+  validating: boolean;
+  error: string | null;
+  draftJwt: string;
+  setDraftJwt: (v: string) => void;
+  onValidate: () => void;
+  onClear: () => void;
+  capDraftCents: number;
+  setCapDraftCents: (v: number) => void;
+  onCommitCap: () => void;
+  onChangePremiumModel: (m: PremiumModel) => void;
+  onOpenPortal: () => void;
+}
+
+const PREMIUM_MODELS: { value: PremiumModel; label: string; rate: string }[] = [
+  { value: "fast", label: "Fast (free)", rate: "Groq Llama 3.3 · included" },
+  { value: "premium-haiku", label: "Haiku 4.5", rate: "$0.40 / 10K words · best $/quality" },
+  { value: "premium-sonnet", label: "Sonnet 4.7", rate: "$0.60 / 10K words · long-form" },
+  { value: "premium-opus", label: "Opus 4.7", rate: "$0.99 / 10K words · reasoning" },
+  { value: "premium-gpt41", label: "GPT-4.1", rate: "$0.50 / 10K words · alt provider" },
+];
+
+function LicensePanel(p: LicensePanelProps) {
+  const { settings, info } = p;
+  const hasLicense = !!settings.license_jwt && !!info?.valid;
+  const includedRemaining = info ? Math.max(0, info.included_premium_words - info.words_used_this_month) : 0;
+
+  return (
+    <div className="fb-form">
+      {!hasLicense && (
+        <div className="fb-section">
+          <label className="fb-label">No license — running in BYOK mode</label>
+          <div className="fb-hint">
+            FunButton stays 100% functional on the free tier (Groq BYOK or local Ollama).
+            Upgrade unlocks Claude Haiku / Sonnet / Opus / GPT-4.1 cleanup, 50K
+            premium words/mo included on Pro, and metered overage with a user-set cap.
+          </div>
+          <a
+            className="fb-btn"
+            href="https://funbutton.ai/#pricing"
+            target="_blank"
+            rel="noreferrer"
+            style={{ alignSelf: "flex-start", marginTop: 12, textDecoration: "none" }}
+          >See pricing →</a>
+        </div>
+      )}
+
+      <div className="fb-section">
+        <label className="fb-label">{hasLicense ? "License" : "Activate license"}</label>
+        {hasLicense ? (
+          <div className="fb-license-summary">
+            <div className="fb-license-row">
+              <span className="fb-license-key">Tier</span>
+              <span className="fb-license-val">{info!.tier.replace(/_/g, " ")}</span>
+            </div>
+            <div className="fb-license-row">
+              <span className="fb-license-key">JWT expires</span>
+              <span className="fb-license-val">{new Date(info!.expires_at).toLocaleDateString()}</span>
+            </div>
+            <div className="fb-license-row">
+              <span className="fb-license-key">Included premium words</span>
+              <span className="fb-license-val">
+                {info!.included_premium_words === 0
+                  ? "0 (pay-as-you-go)"
+                  : `${includedRemaining.toLocaleString()} / ${info!.included_premium_words.toLocaleString()} remaining`}
+              </span>
+            </div>
+            <div className="fb-license-row">
+              <span className="fb-license-key">Active cap</span>
+              <span className="fb-license-val">
+                {info!.cap_cents === 0 ? "$0 (hard stop / fast tier only)" : `$${(info!.cap_cents / 100).toFixed(0)}/mo`}
+              </span>
+            </div>
+            <div className="fb-license-actions">
+              <button className="fb-btn-small" onClick={p.onOpenPortal}>
+                Manage subscription ↗
+              </button>
+              <button className="fb-btn-small fb-btn-danger" onClick={p.onClear}>
+                Sign out (BYOK)
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <textarea
+              className="fb-input fb-textarea"
+              rows={3}
+              placeholder="Paste your license JWT (received via email after purchase)"
+              value={p.draftJwt}
+              onChange={(e) => p.setDraftJwt(e.target.value)}
+            />
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button
+                className="fb-btn"
+                onClick={p.onValidate}
+                disabled={p.validating || !p.draftJwt.trim()}
+              >
+                {p.validating ? "validating…" : "activate license"}
+              </button>
+            </div>
+            {p.error && <div className="fb-hint fb-down">✗ {p.error}</div>}
+          </>
+        )}
+      </div>
+
+      {hasLicense && (
+        <>
+          <div className="fb-section">
+            <label className="fb-label">Premium model preference</label>
+            <div className="fb-radios">
+              {PREMIUM_MODELS.map((m) => (
+                <button
+                  key={m.value}
+                  className={`fb-pill ${settings.premium_model === m.value ? "on" : ""}`}
+                  onClick={() => p.onChangePremiumModel(m.value)}
+                >{m.label}</button>
+              ))}
+            </div>
+            <div className="fb-hint">
+              {PREMIUM_MODELS.find(m => m.value === settings.premium_model)?.rate}
+              <br />
+              Cleanup falls back to fast tier automatically if your monthly cap is hit.
+            </div>
+          </div>
+
+          <div className="fb-section">
+            <label className="fb-label">Monthly cap (auto top-up)</label>
+            <div className="fb-cap-slider-wrap">
+              <input
+                type="range"
+                min={0}
+                max={10000}
+                step={500}
+                value={p.capDraftCents}
+                onChange={(e) => p.setCapDraftCents(parseInt(e.target.value, 10))}
+                className="fb-cap-slider"
+              />
+              <div className="fb-cap-value">
+                {p.capDraftCents === 0 ? "$0 — OFF" : `$${(p.capDraftCents / 100).toFixed(0)}/mo`}
+              </div>
+            </div>
+            <div className="fb-hint">
+              <strong>$0 = hard stop.</strong> When your spend hits the cap (or any time at $0),
+              cleanup silently falls back to free Groq fast tier with a toast.
+              You can raise / lower / disable this any time. Opt-in OFF by default.
+            </div>
+            {p.capDraftCents !== info?.cap_cents && (
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button className="fb-btn-small" onClick={p.onCommitCap}>
+                  Save cap
+                </button>
+                <button
+                  className="fb-btn-small"
+                  onClick={() => p.setCapDraftCents(info?.cap_cents ?? 0)}
+                >cancel</button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      <footer className="fb-footer">
+        api: <code>{settings.cloud_api_base}</code>
+      </footer>
+    </div>
+  );
+}
+
+function CapDisclosureModal({
+  capCents,
+  onEnable,
+  onCancel,
+}: {
+  capCents: number;
+  onEnable: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fb-modal-overlay" onClick={onCancel}>
+      <div className="fb-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="fb-modal-title">Enable auto top-up?</div>
+        <div className="fb-modal-body">
+          By enabling auto top-up, you authorize FunButton to charge your saved
+          card up to <strong>${(capCents / 100).toFixed(0)} per month</strong> for
+          premium model usage above any included quota.
+          <br /><br />
+          You can change this amount or disable it any time in Settings → License.
+          We'll email you an itemized receipt every month, and you can cancel
+          your subscription with one click.
+        </div>
+        <div className="fb-modal-actions">
+          <button className="fb-btn-small" onClick={onCancel}>Cancel</button>
+          <button className="fb-btn" onClick={onEnable}>
+            Enable ${(capCents / 100).toFixed(0)}/mo cap
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

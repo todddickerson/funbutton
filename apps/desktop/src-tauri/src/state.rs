@@ -92,7 +92,11 @@ pub struct Settings {
     pub premium_model: String,
 }
 
-fn default_cloud_api_base() -> String { "https://api.funbutton.ai".to_string() }
+fn default_cloud_api_base() -> String {
+    // Will move to https://api.funbutton.ai once the funbutton.ai zone is
+    // added to the Spontent CF account and a custom domain is attached.
+    "https://funbutton-api.todd-e03.workers.dev".to_string()
+}
 fn default_premium_model() -> String { "premium-haiku".to_string() }
 fn default_retention_days() -> u32 { 30 }
 

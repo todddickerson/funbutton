@@ -195,3 +195,80 @@ kbd { background: #fff; border: 1px solid #d8d8d8; border-radius: 4px; padding: 
   .fb-hint code { background: #2a2a2a; color: #ddd; }
   .fb-footer { color: #666; border-top-color: #2a2a2a; }
 }
+
+/* -------- License panel -------- */
+.fb-tab-pill.ok { background: #2bb673; color: #fff; }
+
+.fb-license-summary {
+  display: flex; flex-direction: column; gap: 6px;
+  background: #fff; border: 1px solid #e8e8e8; border-radius: 8px;
+  padding: 12px 14px;
+}
+.fb-license-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 12px; color: #555;
+}
+.fb-license-key { text-transform: uppercase; letter-spacing: 0.05em; font-size: 10px; color: #888; }
+.fb-license-val { color: #1a1a1a; font-weight: 600; font-variant-numeric: tabular-nums; }
+.fb-license-actions { display: flex; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #eee; }
+.fb-btn-danger { color: #cc0030; border-color: #f0bbc8; }
+.fb-btn-danger:hover { color: #fff; background: #cc0030; border-color: #cc0030; }
+
+.fb-cap-slider-wrap {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px; background: #fff; border: 1px solid #e8e8e8; border-radius: 8px;
+}
+.fb-cap-slider { flex: 1; accent-color: #ff3366; }
+.fb-cap-value {
+  font-weight: 700; font-variant-numeric: tabular-nums;
+  min-width: 100px; text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
+/* -------- Cap disclosure modal -------- */
+.fb-modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000; padding: 20px;
+}
+.fb-modal {
+  background: #fff; border-radius: 12px; padding: 22px 24px;
+  max-width: 440px; width: 100%;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.3);
+  display: flex; flex-direction: column; gap: 14px;
+}
+.fb-modal-title { font-weight: 700; font-size: 16px; }
+.fb-modal-body { font-size: 13px; line-height: 1.55; color: #444; }
+.fb-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* -------- Toast rail -------- */
+.fb-toast-rail {
+  position: fixed; bottom: 20px; right: 20px; z-index: 999;
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+  pointer-events: none;
+}
+.fb-toast {
+  background: #1a1a1a; color: #f0f0f0;
+  padding: 10px 14px; border-radius: 8px;
+  font-size: 12px; max-width: 360px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  animation: fb-toast-in 0.2s ease-out;
+}
+.fb-toast-warn { background: #cc0030; }
+.fb-toast-ok   { background: #2bb673; }
+@keyframes fb-toast-in {
+  from { transform: translateY(8px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+
+@media (prefers-color-scheme: dark) {
+  .fb-license-summary { background: #1f1f1f; border-color: #333; }
+  .fb-license-key { color: #999; }
+  .fb-license-val { color: #f0f0f0; }
+  .fb-license-actions { border-top-color: #2a2a2a; }
+  .fb-cap-slider-wrap { background: #1f1f1f; border-color: #333; }
+  .fb-modal { background: #1f1f1f; }
+  .fb-modal-title { color: #f0f0f0; }
+  .fb-modal-body { color: #bbb; }
+}
