@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
-type Backend = "auto" | "groq" | "local";
+type Backend = "auto" | "groq" | "local" | "embedded";
 type ModeOverride = "auto" | "code" | "email" | "slack" | "raw";
 type HotkeyKind = "fn" | "right_option";
 
@@ -78,6 +78,8 @@ function App() {
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [last, setLast] = useState<ResultPayload | null>(null);
   const [ollamaUp, setOllamaUp] = useState<boolean | null>(null);
+  // null = unknown / still spawning, true = /health 200, false = spawn failed
+  const [embeddedReady, setEmbeddedReady] = useState<boolean | null>(false);
   const [saved, setSaved] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [historyQuery, setHistoryQuery] = useState("");
@@ -146,6 +148,14 @@ function App() {
       setTab("history");
       refreshHistory();
     });
+    const unEmbReady = listen("funbutton:embedded-ready", () => {
+      setEmbeddedReady(true);
+      pushToast("ok", "Bundled local model ready — no API key needed.");
+    });
+    const unEmbFail = listen<string>("funbutton:embedded-failed", (e) => {
+      setEmbeddedReady(false);
+      console.warn("embedded LLM failed:", e.payload);
+    });
     const unL = listen("funbutton:license-activated", () => {
       invoke<Settings>("get_settings").then((s) => {
         setSettings(s);
@@ -168,6 +178,8 @@ function App() {
       unF.then((u) => u());
       unH.then((u) => u());
       unL.then((u) => u());
+      unEmbReady.then((u) => u());
+      unEmbFail.then((u) => u());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -382,7 +394,7 @@ function App() {
           <div className="fb-section">
             <label className="fb-label">Cleanup backend</label>
             <div className="fb-radios">
-              {(["auto","groq","local"] as const).map(b => (
+              {(["auto","embedded","groq","local"] as const).map(b => (
                 <button
                   key={b}
                   className={`fb-pill ${settings.backend === b ? "on" : ""}`}
@@ -391,11 +403,13 @@ function App() {
               ))}
             </div>
             <div className="fb-hint">
-              <strong>auto</strong> uses local Ollama if running, falls back to Groq.{" "}
-              <strong>groq</strong> always uses cloud.{" "}
-              <strong>local</strong> requires Ollama at <code>{settings.ollama_url}</code>.
+              <strong>auto</strong> tries the bundled local model → Ollama (if running) → Groq.{" "}
+              <strong>embedded</strong> uses the bundled Qwen 2.5 1.5B — no key, offline.{" "}
+              <strong>groq</strong> uses your Groq cloud key.{" "}
+              <strong>local</strong> uses external Ollama at <code>{settings.ollama_url}</code>.
+              {embeddedReady === true && <span className="fb-up"> · embedded ready ✓</span>}
+              {embeddedReady === false && <span className="fb-down"> · embedded loading…</span>}
               {ollamaUp === true && <span className="fb-up"> · ollama detected ✓</span>}
-              {ollamaUp === false && <span className="fb-down"> · ollama not running</span>}
             </div>
           </div>
 

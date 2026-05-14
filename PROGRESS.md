@@ -2,6 +2,50 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-05-14 17:35 — Bundled local inference (zero-key cleanup)
+
+**Reversing the 2026-05-08 PRD lock.** The "no API key, ever" headline isn't literally true until cleanup runs on first install without an Ollama detour. Shipping the bundle. Trade-off (200× bloat, 5 MB → ~1 GB) accepted in writing in `PRD.md` Sprint 2 list.
+
+**Shipped:**
+- **`apps/desktop/src-tauri/vendor/llama/`** (gitignored) — `llama-server` binary from llama.cpp release `b9151` for macOS arm64 (~8.9 MB binary + ~5 MB dylibs, `@loader_path` rpath) plus `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` (~1.0 GB) from HuggingFace.
+- **`scripts/fetch-vendor-deps.sh`** — idempotent fetcher that runs once before any build. CI workflow should call this before `cargo build`. Repo stays ~5 MB; build artifacts get the model.
+- **`src-tauri/src/embedded_llm.rs`** — new module. Locates the vendored binary (resource-dir in bundled mode, `CARGO_MANIFEST_DIR/vendor` in dev), picks a free ephemeral port, spawns `llama-server` with the GGUF, polls `/health` until 200 (timeout 90 s), exposes OpenAI-compatible `/v1/chat/completions`. Child process killed on `Drop`.
+- **`Backend::Embedded`** added to `state.rs`. `AppState` gains `Mutex<Option<EmbeddedServerHandle>>` so the pipeline can read whether the server is up.
+- **Spawn at app startup** — `lib.rs` setup block launches the server in a tokio task. Emits `funbutton:embedded-ready` (success) or `funbutton:embedded-failed` (with error string) when settled.
+- **Pipeline fallback chain rewritten** (`pipeline.rs`):
+  - `Auto` → embedded → ollama-external (if running) → groq (if key set)
+  - `Embedded` / `Local` / `Groq` → just that backend
+  - Final last-resort if every backend fails: return raw transcript verbatim with `backend_used = "raw-passthrough"` (better than a hard error for a free user).
+- **React Settings UI** — `embedded` added to the backend chip row; new `embeddedReady` state listens to `funbutton:embedded-ready` / `-failed` and surfaces a "Bundled local model ready" toast + status pill in the backend hint.
+- **`tauri.conf.json` resources** — `vendor/llama/llama-server`, all `lib*.dylib`s, the GGUF, and the LICENSE are declared as bundle resources. The `.app` ships them in `Contents/Resources/_up_/vendor/llama/`.
+- **README** rewritten — headline now "Zero API key, zero install — cleanup runs on a bundled local model out of the box." Bundle size moved from "~10 MB" → "~1 GB (incl. bundled LLM)" honestly; install instructions add the `fetch-vendor-deps.sh` one-time step.
+
+**Smoke tests passed locally:**
+- `llama-server --version` runs, `@loader_path` resolves all 9 dylibs cleanly.
+- Cold spawn → `/health` 200 in ~1 s (warm OS page cache; cold disk is ~5-10 s on M1/M2).
+- `POST /v1/chat/completions` with the AUTO cleanup prompt returned a sensible cleaned string. Quality is below Llama 3.3 70B (expected for 1.5B Q4) but usable for the free-tier promise.
+- `cargo check` + `tsc --noEmit` both clean.
+
+**Sprint 2 backlog audit — items 2–6 were already shipped in Sprint 1:**
+- ✅ Email / Slack / Raw / Code / Auto modes (`cleanup.rs` AUTO/EMAIL/SLACK/CODE/RAW prompts since the initial Tauri scaffold)
+- ✅ Custom dictionary UI + prompt injection (Settings `dictionary: Vec<String>` + `USER DICTIONARY` block in `pipeline.rs`)
+- ✅ Transcription history view (local SQLite `history.rs` + Cmd+Shift+H toggle, filter UI in `App.tsx`)
+- ✅ Cmd+Shift+V re-paste last cleaned (`lib.rs` global shortcut, `last_cleaned` mutex)
+- ✅ Hotkey remap UI in Settings (`hotkey_kind: Fn | RightOption` pill in Settings)
+
+So bundled LLM was the only genuinely-new Sprint 2 item left.
+
+**Known limitations / V1.2 follow-ups:**
+- **Transcription still needs a key.** Whisper isn't bundled yet — free users need a Groq key OR a license for speech-to-text. Adding `whisper.cpp` + `ggml-tiny.en.bin` (~75 MB) is the next "no key, ever" step.
+- **Universal binary not shipped** — vendor binary is arm64-only. Intel Mac users currently can't run the embedded backend (fall back to Groq / Ollama). Adding x86_64 vendor + `lipo` universal binary is a separate task.
+- Cleanup quality on 1.5B Q4 is noticeably below Llama 3.3 70B. Power users will still pick premium models via license.
+
+**Blockers (unchanged):**
+- Stripe live keys + the 9 `STRIPE_PRICE_*` IDs.
+- CF token with `Account:Zones:Edit` (or a 1-click "Add a Site" in the dashboard) to migrate `funbutton.ai` and attach `api.funbutton.ai`.
+
+---
+
 ## 2026-05-12 11:30 — Day 7 polish: License UI + deep-link + landing pricing
 
 **Settings UI (License panel)** — `apps/desktop/src/App.tsx`:

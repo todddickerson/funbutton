@@ -80,6 +80,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "vendor/llama/llama-server": "vendor/llama/llama-server",
+      "vendor/llama/lib*.dylib": "vendor/llama/",
+      "vendor/llama/qwen2.5-1.5b-instruct-q4_k_m.gguf": "vendor/llama/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+      "vendor/llama/LICENSE": "vendor/llama/LICENSE"
+    },
     "macOS": {
       "minimumSystemVersion": "12.0"
     }

@@ -2,6 +2,7 @@ mod app_detect;
 mod audio;
 mod cleanup;
 mod cloud;
+mod embedded_llm;
 mod fn_hotkey;
 mod groq;
 mod history;
@@ -472,6 +473,31 @@ pub fn run() {
                                 .title("FunButton license activated")
                                 .body("Premium cleanup is now enabled.")
                                 .show();
+                        }
+                    }
+                });
+            }
+
+            // Spawn the bundled local-inference server in the background.
+            // Loads ~1 s after the GGUF is in OS page cache; cold-start is a
+            // few seconds. The pipeline gracefully falls back to other
+            // backends if this is still spawning when the user dictates.
+            {
+                let app_for_llm = app.handle().clone();
+                let state_for_llm = Arc::clone(&app_state);
+                tauri::async_runtime::spawn(async move {
+                    match embedded_llm::EmbeddedServer::spawn(&app_for_llm).await {
+                        Ok(server) => {
+                            log::info!("embedded llama-server ready at {}", server.base_url());
+                            *state_for_llm.embedded.lock() = Some(std::sync::Arc::new(server));
+                            let _ = app_for_llm.emit("funbutton:embedded-ready", ());
+                        }
+                        Err(e) => {
+                            log::warn!("embedded llama-server failed to start: {e:#}");
+                            let _ = app_for_llm.emit(
+                                "funbutton:embedded-failed",
+                                e.to_string(),
+                            );
                         }
                     }
                 });

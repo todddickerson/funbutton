@@ -1,3 +1,4 @@
+use crate::embedded_llm::EmbeddedServerHandle;
 use crate::history::History;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -6,9 +7,14 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Backend {
+    /// Try embedded → ollama-external → groq, in that order.
     Auto,
+    /// Force Groq cloud (fast tier or premium via license).
     Groq,
+    /// Force user-installed Ollama at `ollama_url`.
     Local,
+    /// Force the app-bundled llama.cpp + Qwen 2.5 1.5B GGUF.
+    Embedded,
 }
 
 impl Default for Backend {
@@ -159,6 +165,9 @@ pub struct AppState {
     pub last_transcript: Mutex<String>,
     pub last_cleaned: Mutex<String>,
     pub history: Arc<History>,
+    /// `Some` once the bundled llama-server has finished starting up. `None`
+    /// during startup or if the user's machine couldn't launch it.
+    pub embedded: Mutex<Option<EmbeddedServerHandle>>,
 }
 
 pub type AppStateHandle = Arc<AppState>;
@@ -171,6 +180,7 @@ impl AppState {
             last_transcript: Mutex::new(String::new()),
             last_cleaned: Mutex::new(String::new()),
             history,
+            embedded: Mutex::new(None),
         })
     }
 }

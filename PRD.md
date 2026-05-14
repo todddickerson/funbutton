@@ -109,7 +109,7 @@ For shipped app: user enters their own Groq key in Settings. Defaults pull from 
 - [ ] Cmd+Shift+H to toggle history window
 - [ ] Per-mode tone tuning sliders (formal ↔ casual)
 - [ ] Polished onboarding: 30-second walkthrough on first launch — leans punk/fun brand
-- [x] **Bundled local LLM — DECISION: SKIP (locked 2026-05-08, post-Sprint-1 wargame).** The current 5 MB unsigned bundle is the actual differentiator. Bundling a 1 GB GGUF would be a 200× bloat for the 80 % of users who'll paste a Groq key. Ollama auto-detect already serves the local-LLM-curious user, with one shell line: `brew install ollama && ollama pull qwen2.5:1.5b`. Documented in README + landing. Revisit only if Ollama detection fails for >10 % of testers.
+- [x] **Bundled local LLM — DECISION: SHIP (re-locked 2026-05-14, reversing 2026-05-08 skip).** The "no API key, ever" headline isn't literally true until cleanup works on first install without an Ollama detour. Now bundles `llama-server` (llama.cpp b9151, ~9 MB binary + ~5 MB dylibs) + `Qwen2.5-1.5B-Instruct Q4_K_M` GGUF (~1.0 GB). Trade-off accepted: bundle grew from ~5 MB → ~1 GB (200× bloat as flagged in the prior lock). Justification: free-tier UX win is significant — first dictation works with zero account, zero key, zero shell commands. Ollama-external path stays as a power-user option. Vendor artifacts fetched via `src-tauri/scripts/fetch-vendor-deps.sh`, not committed to git.
 - [ ] Local Whisper fallback toggle (whisper.cpp + small.en model bundled)
 - [ ] Per-language code profiles (Python: `def`/`self`; JS/TS: `const`/`=>`; Rust: `let`/`mut`; etc.)
 

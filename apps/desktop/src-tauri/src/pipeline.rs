@@ -133,25 +133,45 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
         }
     }
 
-    // BYOK path (or final fallback) — unchanged behavior.
-    let local_available = match backend {
-        Backend::Local => true,
-        Backend::Auto => ollama::is_available(&ollama_url).await,
-        Backend::Groq => false,
-    };
+    // BYOK / local path. Fallback chain depends on user preference:
+    //   Embedded → try only the bundled llama.cpp.
+    //   Local    → try only user-installed Ollama.
+    //   Groq     → try only the cloud (BYOK key required).
+    //   Auto     → embedded (always available) → ollama-external → groq.
+    let embedded = state.embedded.lock().clone();
 
-    let (cleaned, used) = if local_available {
-        match ollama::generate(&ollama_url, &ollama_model, &prompt, &raw).await {
-            Ok(t) => (t, "local"),
-            Err(e) => {
-                log::warn!("local cleanup failed, falling back to groq: {e:#}");
-                let cleaned = groq::chat_complete(&api_key, &prompt, &raw).await?;
-                (cleaned, "groq")
+    let try_embedded = matches!(backend, Backend::Embedded | Backend::Auto)
+        && embedded.is_some();
+    let try_ollama = matches!(backend, Backend::Local | Backend::Auto)
+        && ollama::is_available(&ollama_url).await;
+    let try_groq = matches!(backend, Backend::Groq | Backend::Auto)
+        && !api_key.is_empty();
+
+    let (cleaned, used) = 'cleanup: {
+        if try_embedded {
+            if let Some(srv) = &embedded {
+                match srv.generate(&prompt, &raw).await {
+                    Ok(t) => break 'cleanup (t, "embedded"),
+                    Err(e) => log::warn!("embedded cleanup failed: {e:#}"),
+                }
             }
         }
-    } else {
-        let cleaned = groq::chat_complete(&api_key, &prompt, &raw).await?;
-        (cleaned, "groq")
+        if try_ollama {
+            match ollama::generate(&ollama_url, &ollama_model, &prompt, &raw).await {
+                Ok(t) => break 'cleanup (t, "ollama"),
+                Err(e) => log::warn!("ollama cleanup failed: {e:#}"),
+            }
+        }
+        if try_groq {
+            match groq::chat_complete(&api_key, &prompt, &raw).await {
+                Ok(t) => break 'cleanup (t, "groq"),
+                Err(e) => log::warn!("groq cleanup failed: {e:#}"),
+            }
+        }
+        // Last resort: surface raw transcript verbatim. Better than a hard
+        // failure for a free user with no backends available.
+        log::warn!("all cleanup backends unavailable — returning raw transcript");
+        (raw.clone(), "raw-passthrough")
     };
 
     let cleaned = post_process(cleaned);
