@@ -18,6 +18,7 @@ use crate::state::{AppState, AppStateHandle, HotkeyKind, Settings, Status};
 
 use parking_lot::Mutex as PMutex;
 use serde::Serialize;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::sync::Arc;
 use tauri::{
@@ -59,7 +60,46 @@ fn save_settings(
     settings: Settings,
 ) -> Result<(), String> {
     persist(&settings).map_err(|e| e.to_string())?;
+    // Hot-swap the armed hotkey if the user changed it. Both Fn and Right
+    // Option listeners are already running; flipping the atomic flips which
+    // one is allowed to emit events. No restart needed.
+    state
+        .armed_hotkey
+        .store(settings.hotkey_kind.as_u8(), Ordering::SeqCst);
+    log::info!("settings saved; armed hotkey = {:?}", settings.hotkey_kind);
     *state.settings.lock() = settings;
+    Ok(())
+}
+
+/// Derived label for the currently-armed hotkey. Single source of truth; the
+/// persisted `hotkey_label` field is ignored on read.
+#[tauri::command]
+fn get_hotkey_label(state: tauri::State<'_, AppStateHandle>) -> String {
+    state.settings.lock().hotkey_kind.label().to_string()
+}
+
+/// Simulate a hotkey Down→Up cycle. Bisection tool: confirms that the audio
+/// + transcription + cleanup + paste pipeline works independently of the
+/// hotkey listener. Records for `duration_ms` (default 1500) which is enough
+/// to clear the 4000-sample minimum gate in handle_hotkey_loop.
+#[tauri::command]
+fn simulate_hotkey(
+    state: tauri::State<'_, AppStateHandle>,
+    duration_ms: Option<u64>,
+) -> Result<(), String> {
+    let tx = state
+        .hotkey_tx
+        .lock()
+        .clone();
+    let Some(tx) = tx else { return Err("no hotkey channel".into()); };
+    let dur = duration_ms.unwrap_or(1500);
+    log::info!("simulate_hotkey: firing Down→(wait {dur}ms)→Up");
+    tx.send(hotkey::HotkeyEvent::Down).map_err(|e| e.to_string())?;
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(dur));
+        let _ = tx.send(hotkey::HotkeyEvent::Up);
+        log::info!("simulate_hotkey: Up sent");
+    });
     Ok(())
 }
 
@@ -306,15 +346,19 @@ fn dirs_home() -> std::path::PathBuf {
 fn load_settings() -> Settings {
     let p = settings_path();
     if let Ok(bytes) = std::fs::read(&p) {
-        if let Ok(s) = serde_json::from_slice::<Settings>(&bytes) {
+        if let Ok(mut s) = serde_json::from_slice::<Settings>(&bytes) {
             // Refresh API key from env if file's is empty
             if s.groq_api_key.is_empty() {
-                let mut s = s;
                 if let Ok(env_key) = std::env::var("GROQ_API_KEY") {
                     s.groq_api_key = env_key;
                 }
-                return s;
             }
+            // Force the persisted hotkey_label to match the actual armed
+            // kind. Old settings files (pre-v0.1.1) shipped a hardcoded
+            // "Right Option (hold)..." string that lied about what the
+            // listener was actually doing — that mismatch was the v0.1.0
+            // bug that sent users hunting for a key the app wasn't watching.
+            s.hotkey_label = s.hotkey_kind.label().to_string();
             return s;
         }
     }
@@ -353,18 +397,24 @@ pub fn run() {
     let _ = history_arc.purge_older_than(initial.history_retention_days);
     let app_state: AppStateHandle = AppState::new(initial, Arc::clone(&history_arc));
 
-    // Hotkey channel — pick the listener based on user setting (default: Fn).
+    // Hotkey channel — spawn BOTH listeners; each filters on the shared
+    // `armed_hotkey` atomic so only the active one emits. This means
+    // changing the hotkey kind in Settings hot-swaps instantly without an
+    // app restart, and gives us graceful fallback if one listener can't
+    // start (e.g. Input Monitoring denied → Fn listener errors out, but
+    // Right Option still works because rdev only needs Accessibility).
     let (tx, rx) = mpsc::channel::<HotkeyEvent>();
-    match app_state.settings.lock().hotkey_kind {
-        HotkeyKind::Fn => {
-            log::info!("hotkey: Fn (CGEventTap)");
-            fn_hotkey::spawn_listener(tx);
-        }
-        HotkeyKind::RightOption => {
-            log::info!("hotkey: Right Option (rdev)");
-            hotkey::spawn_listener(tx);
-        }
-    }
+    *app_state.hotkey_tx.lock() = Some(tx.clone());
+    let armed_fn = Arc::clone(&app_state.armed_hotkey);
+    let armed_ro = Arc::clone(&app_state.armed_hotkey);
+    log::info!(
+        "spawning both hotkey listeners; armed = {:?}",
+        app_state.settings.lock().hotkey_kind
+    );
+    fn_hotkey::spawn_listener(tx.clone(), armed_fn);
+    hotkey::spawn_listener(tx, armed_ro);
+    // Silence "unused" warning on the imported enum when we don't directly match.
+    let _ = HotkeyKind::Fn;
 
     // Shared recorder (one at a time)
     let recorder: Arc<PMutex<Recorder>> = Arc::new(PMutex::new(Recorder::new()));
@@ -419,6 +469,8 @@ pub fn run() {
             save_settings,
             get_status,
             get_last_transcript,
+            get_hotkey_label,
+            simulate_hotkey,
             ollama_check,
             open_settings,
             open_onboarding,

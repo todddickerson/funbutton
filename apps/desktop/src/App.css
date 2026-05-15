@@ -272,3 +272,36 @@ kbd { background: #fff; border: 1px solid #d8d8d8; border-radius: 4px; padding: 
   .fb-modal-title { color: #f0f0f0; }
   .fb-modal-body { color: #bbb; }
 }
+
+/* -------- Permissions panel -------- */
+.fb-perms { display: flex; flex-direction: column; gap: 6px; }
+.fb-perm-row {
+  display: grid;
+  grid-template-columns: 18px 130px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #e3e3e3;
+  background: #fafafa;
+  font-size: 12px;
+}
+.fb-perm-row.ok   { border-color: #2bb673; background: rgba(43,182,115,0.06); }
+.fb-perm-row.warn { border-color: #f0a020; background: rgba(240,160,32,0.06); }
+.fb-perm-row.bad  { border-color: #cc0030; background: rgba(204,0,48,0.08); }
+.fb-perm-dot { font-size: 14px; line-height: 1; text-align: center; }
+.fb-perm-row.ok   .fb-perm-dot { color: #2bb673; }
+.fb-perm-row.warn .fb-perm-dot { color: #f0a020; }
+.fb-perm-row.bad  .fb-perm-dot { color: #cc0030; }
+.fb-perm-name { font-weight: 600; }
+.fb-perm-why { color: #555; }
+.fb-perm-state { font-size: 11px; color: #2bb673; text-transform: uppercase; letter-spacing: 0.5px; }
+.fb-perm-grant { white-space: nowrap; }
+
+@media (prefers-color-scheme: dark) {
+  .fb-perm-row { background: #1a1a1a; border-color: #333; }
+  .fb-perm-why { color: #aaa; }
+  .fb-perm-row.ok   { background: rgba(43,182,115,0.10); }
+  .fb-perm-row.warn { background: rgba(240,160,32,0.10); }
+  .fb-perm-row.bad  { background: rgba(204,0,48,0.12); }
+}

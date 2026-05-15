@@ -94,6 +94,21 @@ function App() {
   const [capDraftCents, setCapDraftCents] = useState<number>(2000);
   const [showCapDisclosure, setShowCapDisclosure] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  // Permissions snapshot (refreshed on mount, on tab focus, and after a Grant click).
+  const [perms, setPerms] = useState<{ microphone: boolean; accessibility: boolean; input_monitoring: boolean } | null>(null);
+
+  async function refreshPerms() {
+    try {
+      const [mic, acc, im] = await Promise.all([
+        invoke<boolean>("plugin:macos-permissions|check_microphone_permission"),
+        invoke<boolean>("plugin:macos-permissions|check_accessibility_permission"),
+        invoke<boolean>("plugin:macos-permissions|check_input_monitoring_permission"),
+      ]);
+      setPerms({ microphone: mic, accessibility: acc, input_monitoring: im });
+    } catch (e) {
+      console.warn("perms check failed", e);
+    }
+  }
 
   function pushToast(kind: Toast["kind"], text: string) {
     const id = Date.now() + Math.random();
@@ -124,7 +139,13 @@ function App() {
     invoke<Settings>("get_settings").then(setSettings);
     invoke<string>("get_status").then(setStatus);
     invoke<boolean>("ollama_check").then(setOllamaUp).catch(() => setOllamaUp(false));
+    refreshPerms();
     refreshHistory();
+
+    // Re-check perms whenever the window regains focus (after a System
+    // Settings round-trip the user will tab back to FunButton).
+    const onFocus = () => refreshPerms();
+    window.addEventListener("focus", onFocus);
 
     const unS = listen<{ status: string; message: string | null }>("funbutton:status", (e) => {
       setStatus(e.payload.status);
@@ -180,6 +201,7 @@ function App() {
       unL.then((u) => u());
       unEmbReady.then((u) => u());
       unEmbFail.then((u) => u());
+      window.removeEventListener("focus", onFocus);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -345,8 +367,49 @@ function App() {
               </div>
             </div>
           )}
+          {perms && (
+            <div className="fb-section">
+              <label className="fb-label">Permissions</label>
+              <div className="fb-perms">
+                <PermRow
+                  name="Microphone"
+                  granted={perms.microphone}
+                  why="record what you say"
+                  onGrant={async () => {
+                    await invoke("plugin:macos-permissions|request_microphone_permission").catch(() => {});
+                    setTimeout(refreshPerms, 600);
+                  }}
+                />
+                <PermRow
+                  name="Accessibility"
+                  granted={perms.accessibility}
+                  why="paste cleaned text via ⌘V + watch Right Option"
+                  onGrant={async () => {
+                    await invoke("plugin:macos-permissions|request_accessibility_permission").catch(() => {});
+                    setTimeout(refreshPerms, 600);
+                  }}
+                />
+                <PermRow
+                  name="Input Monitoring"
+                  granted={perms.input_monitoring}
+                  why={settings.hotkey_kind === "fn" ? "REQUIRED — detect Fn key" : "only required for the Fn hotkey"}
+                  required={settings.hotkey_kind === "fn"}
+                  onGrant={async () => {
+                    await invoke("plugin:macos-permissions|request_input_monitoring_permission").catch(() => {});
+                    setTimeout(refreshPerms, 600);
+                  }}
+                />
+              </div>
+              {settings.hotkey_kind === "fn" && !perms.input_monitoring && (
+                <div className="fb-hint" style={{color: "#ff9966", marginTop: 6}}>
+                  ⚠ The Fn hotkey will NOT work without Input Monitoring. Either grant it above (then quit + relaunch FunButton — macOS only re-checks on next launch), or switch the hotkey to <strong>Right Option</strong> below (only needs Accessibility).
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="fb-section">
-            <label className="fb-label">The Fun Button</label>
+            <label className="fb-label">The Fun Button — currently armed: <strong>{settings.hotkey_kind === "fn" ? "Fn" : "Right Option"}</strong></label>
             <div className="fb-keyboard-glyph">
               <div className={`fb-key fn ${settings.hotkey_kind === "fn" ? "on" : ""}`} title="The Fn key — bottom-left of every Mac keyboard">
                 <span className="fb-key-label">fn</span>
@@ -363,15 +426,40 @@ function App() {
                 <button
                   key={k}
                   className={`fb-pill ${settings.hotkey_kind === k ? "on" : ""}`}
-                  onClick={() => update("hotkey_kind", k)}
+                  onClick={async () => {
+                    // Hot-swap: persist immediately so the Rust side flips
+                    // the armed-hotkey atomic on save_settings. No app
+                    // restart needed.
+                    const next = { ...settings, hotkey_kind: k };
+                    setSettings(next);
+                    await invoke("save_settings", { settings: next });
+                    pushToast("ok", `Hotkey armed: ${k === "fn" ? "Fn" : "Right Option"}`);
+                  }}
                 >{k === "fn" ? "Fn (default)" : "Right Option"}</button>
               ))}
             </div>
             <div className="fb-hint">
               Default is the <strong>Fun Button</strong> (Fn — bottom-left). Needs Input Monitoring permission on first run.
-              {" "}Switch to <strong>Right Option</strong> if you've already mapped Fn elsewhere (Karabiner, Hyperkey, etc).
+              {" "}Switch to <strong>Right Option</strong> if you've already mapped Fn elsewhere (Karabiner, Hyperkey, etc) — it only needs Accessibility.
               <br/>
-              <kbd>⌘⇧V</kbd> re-pastes last cleaned · <kbd>⌘⇧H</kbd> opens history · changes apply on next launch.
+              <kbd>⌘⇧V</kbd> re-pastes last cleaned · <kbd>⌘⇧H</kbd> opens history · hotkey switches take effect immediately.
+            </div>
+            <div className="fb-actions" style={{marginTop: 10}}>
+              <button
+                className="fb-btn-small"
+                onClick={async () => {
+                  pushToast("info", "Simulating Down→Up (1.5s)…");
+                  try {
+                    await invoke("simulate_hotkey", { durationMs: 1500 });
+                    pushToast("ok", "Hotkey simulated — pipeline should now record, transcribe, and paste at your cursor");
+                  } catch (e) {
+                    pushToast("warn", `Simulate failed: ${e}`);
+                  }
+                }}
+              >Test Hotkey (bisect: bypass the listener)</button>
+              <div className="fb-hint" style={{marginTop: 6}}>
+                If this button works but holding {settings.hotkey_kind === "fn" ? "Fn" : "Right Option"} doesn't, the listener is being blocked by macOS — grant the matching permission above.
+              </div>
             </div>
           </div>
 
@@ -492,7 +580,7 @@ function App() {
           </div>
 
           <footer className="fb-footer">
-            v0.1.0 · GPLv3 · <a href="https://github.com/todddickerson/funbutton" target="_blank" rel="noreferrer">github</a>
+            v0.1.1 · GPLv3 · <a href="https://github.com/todddickerson/funbutton" target="_blank" rel="noreferrer">github</a>
           </footer>
         </div>
       ) : tab === "license" ? (
@@ -565,7 +653,7 @@ function App() {
           </div>
 
           {history.length === 0 ? (
-            <div className="fb-history-empty">No history yet. Hold Right Option and dictate something.</div>
+            <div className="fb-history-empty">No history yet. Hold {settings.hotkey_kind === "fn" ? "Fn (the Fun Button)" : "Right Option"} and dictate something.</div>
           ) : (
             <div className="fb-history-list">
               {history.map(h => (
@@ -839,6 +927,30 @@ function fmtTs(ts: number): string {
   const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   if (sameDay) return time;
   return `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+}
+
+function PermRow(props: {
+  name: string;
+  granted: boolean;
+  why: string;
+  required?: boolean;
+  onGrant: () => void;
+}) {
+  const { name, granted, why, required, onGrant } = props;
+  return (
+    <div className={`fb-perm-row ${granted ? "ok" : required ? "bad" : "warn"}`}>
+      <span className="fb-perm-dot" aria-hidden>{granted ? "●" : "○"}</span>
+      <span className="fb-perm-name">{name}</span>
+      <span className="fb-perm-why">{why}</span>
+      {granted ? (
+        <span className="fb-perm-state">granted</span>
+      ) : (
+        <button className="fb-btn-small fb-perm-grant" onClick={onGrant}>
+          Grant in System Settings
+        </button>
+      )}
+    </div>
+  );
 }
 
 export default App;

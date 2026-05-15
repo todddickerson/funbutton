@@ -2,6 +2,54 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-05-15 12:40 — v0.1.1: HOTKEY BUG FIXED
+
+**Done — root cause was the installed v0.1.0 `.app` missing `NSInputMonitoringUsageDescription`.** Without that Info.plist key macOS silently denies Input Monitoring at the kernel level, `CGEventTapCreate` returns NULL, the Fn-key tap fails to install, the listener thread runs forever receiving zero events. No log surfaces — Settings just sits at "IDLE" and nothing happens when you press Fn. To make matters worse, the UI rendered a hardcoded "Right Option (hold) · Cmd+Shift+V re-paste" string from the persisted `settings.json` even though the actual armed listener was Fn — so anyone trying to debug pressed the wrong key.
+
+**Repaired everything that contributed:**
+
+- **`Info.plist` already had the key** in the repo (line 9-10) — it just hadn't been in the v0.1.0 bundle. New v0.1.1 bundle ships it. Verified via `plutil -p`.
+- **Both listeners now run simultaneously** — Fn (CGEventTap) and Right Option (rdev) — and each only emits events when the shared `armed_hotkey: Arc<AtomicU8>` matches its kind. Changing the hotkey in Settings flips the atomic; the previously-passive listener becomes active **without an app restart**. If Fn fails to install because Input Monitoring was denied, Right Option still works without any user action beyond a click.
+- **`HotkeyKind::label()`** is now the single source of truth for the hotkey name shown in Settings. The persisted `hotkey_label` field is overwritten on load to match `hotkey_kind`. The Settings UI never displays a stale label again.
+- **Permissions panel in Settings.** Three rows (Microphone / Accessibility / Input Monitoring) showing live grant state via `tauri-plugin-macos-permissions`. Each has a "Grant in System Settings" button that calls the matching `request_*_permission` command. Auto-refreshes when the window regains focus (so the round-trip to System Settings shows up immediately). When the Fn hotkey is armed but Input Monitoring is denied, an amber warning recommends switching to Right Option.
+- **Test Hotkey button** in the Settings → Fun Button section. Calls the new `simulate_hotkey` Tauri command, which fires `HotkeyEvent::Down` then `HotkeyEvent::Up` 1.5 s later directly into the channel — bypassing the listener entirely. This is the **bisection tool**: if Test Hotkey makes audio → transcribe → cleanup → paste happen but holding the real key doesn't, you know it's the listener (and the permissions panel above will say which TCC bit is missing).
+- **Hot-swap on hotkey change.** Clicking Fn / Right Option in Settings now persists immediately and flips the atomic. No "changes apply on next launch" caveat.
+- **Hardcoded "Hold Right Option" empty-history message** replaced with the dynamic "Hold {Fn / Right Option}".
+- **Better logging.** Every Down/Up event from either listener now logs `hotkey: Fn DOWN` / `hotkey: Right Option UP`. If `CGEventTapCreate` fails, the error message explicitly tells the user to enable Input Monitoring **or switch to Right Option**.
+
+**Versions bumped to 0.1.1.** Cargo.toml + tauri.conf.json + Settings footer all consistent.
+
+**Verification done autonomously:**
+- `cargo check` + `cargo build --release` both clean.
+- `tsc --noEmit` on frontend clean.
+- New `.app` bundle's `Info.plist` contains `NSInputMonitoringUsageDescription` (verified with `plutil -p`).
+- Killed the old running pid 915, removed the v0.1.0 install, installed v0.1.1 to `/Applications/FunButton.app`, `xattr -cr` to strip quarantine.
+- `tccutil reset {ListenEvent,Accessibility,Microphone} ai.funbutton.desktop` to force fresh TCC prompts on first key event.
+- Launched from terminal with `RUST_LOG=info` stderr capture: confirmed `[INFO] spawning both hotkey listeners; armed = Fn` and `[INFO] Fn key tap installed (Input Monitoring granted); running CFRunLoop`. The tap is alive and listening.
+
+**Final-mile verification (real Fn keypress → Down/Up log line)** needs a human keypress because synthesizing CGEvents with the SecondaryFn flag from a test process requires Accessibility on the synthesizer, which terminal lacks. Todd has been notified via Telegram to test.
+
+**Files changed:**
+- `apps/desktop/src-tauri/src/state.rs` — `HotkeyKind::label()`, `as_u8/from_u8`, `armed_hotkey: Arc<AtomicU8>`, `hotkey_tx: Mutex<Option<Sender>>` so `simulate_hotkey` can reach the channel.
+- `apps/desktop/src-tauri/src/fn_hotkey.rs` — accepts `armed` filter, logs Down/Up, clearer error message.
+- `apps/desktop/src-tauri/src/hotkey.rs` — same shape (`armed` filter, Down/Up logs, error message).
+- `apps/desktop/src-tauri/src/lib.rs` — spawns both listeners with shared channel, `save_settings` flips the atomic, new commands `get_hotkey_label` + `simulate_hotkey`, `load_settings` overwrites stale `hotkey_label`.
+- `apps/desktop/src-tauri/Cargo.toml` + `tauri.conf.json` — version 0.1.1.
+- `apps/desktop/src/App.tsx` — Permissions panel + `PermRow` component, Test Hotkey button, hot-swap on hotkey-kind click, dynamic label/empty-history copy, refreshPerms on mount + window focus.
+- `apps/desktop/src/App.css` — `.fb-perms` + `.fb-perm-row` styles in light + dark.
+
+**Next (Sprint 2.6 / 3 carried forward):**
+- Smart dictionary (per-user terms injected into cleanup prompt as a boost list).
+- Snippets (named shortcuts → expansion text).
+- Command mode ("new line", "delete that", "select all").
+- Per-user learning loop (track corrections, build user-specific cleanup prompt) — read QUALITY-MATCH-SPEC.md first.
+- Tauri auto-updater pointing at GH Releases JSON.
+- 30-second demo gif/video for landing page.
+
+**Blocked:** Real-keypress confirmation depends on Todd (autonomous CGEvent synthesis hits the Accessibility wall on the synthesizer). All other layers verified.
+
+---
+
 ## 2026-05-14 17:35 — Bundled local inference (zero-key cleanup)
 
 **Reversing the 2026-05-08 PRD lock.** The "no API key, ever" headline isn't literally true until cleanup runs on first install without an Ollama detour. Shipping the bundle. Trade-off (200× bloat, 5 MB → ~1 GB) accepted in writing in `PRD.md` Sprint 2 list.

@@ -1,6 +1,6 @@
 [package]
 name = "funbutton"
-version = "0.1.0"
+version = "0.1.1"
 description = "FunButton.ai — local-first voice dictation"
 authors = ["Todd Dickerson <todd@clickfunnels.com>"]
 edition = "2021"

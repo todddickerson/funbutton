@@ -2,6 +2,7 @@ use crate::embedded_llm::EmbeddedServerHandle;
 use crate::history::History;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -56,6 +57,30 @@ pub enum HotkeyKind {
 impl Default for HotkeyKind {
     fn default() -> Self {
         HotkeyKind::Fn
+    }
+}
+
+impl HotkeyKind {
+    pub fn as_u8(self) -> u8 {
+        match self {
+            HotkeyKind::Fn => 0,
+            HotkeyKind::RightOption => 1,
+        }
+    }
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => HotkeyKind::RightOption,
+            _ => HotkeyKind::Fn,
+        }
+    }
+    /// Human label shown in the Settings UI. Single source of truth — never
+    /// persisted; always derived. This is what fixed the "UI says Right Option
+    /// but actual listener is Fn" bug in v0.1.0.
+    pub fn label(self) -> &'static str {
+        match self {
+            HotkeyKind::Fn => "Fn (the Fun Button — bottom-left of your keyboard)",
+            HotkeyKind::RightOption => "Right Option (right side of spacebar)",
+        }
     }
 }
 
@@ -168,12 +193,22 @@ pub struct AppState {
     /// `Some` once the bundled llama-server has finished starting up. `None`
     /// during startup or if the user's machine couldn't launch it.
     pub embedded: Mutex<Option<EmbeddedServerHandle>>,
+    /// Which hotkey is "armed" right now — both listeners run, but only the
+    /// one whose kind matches this atomic emits Down/Up events. Lets us
+    /// hot-swap the active hotkey without restarting the app.
+    pub armed_hotkey: Arc<AtomicU8>,
+    /// Sender end of the hotkey-event channel, kept here so the
+    /// `simulate_hotkey` Tauri command can push synthetic Down/Up events
+    /// without going through the listener — useful for bisecting the
+    /// pipeline when the listener itself is suspect.
+    pub hotkey_tx: Mutex<Option<std::sync::mpsc::Sender<crate::hotkey::HotkeyEvent>>>,
 }
 
 pub type AppStateHandle = Arc<AppState>;
 
 impl AppState {
     pub fn new(settings: Settings, history: Arc<History>) -> AppStateHandle {
+        let armed = Arc::new(AtomicU8::new(settings.hotkey_kind.as_u8()));
         Arc::new(AppState {
             settings: Mutex::new(settings),
             status: Mutex::new(Status::Idle),
@@ -181,6 +216,8 @@ impl AppState {
             last_cleaned: Mutex::new(String::new()),
             history,
             embedded: Mutex::new(None),
+            armed_hotkey: armed,
+            hotkey_tx: Mutex::new(None),
         })
     }
 }
