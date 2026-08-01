@@ -2,6 +2,42 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-08-01 17:05 — v0.1.2 SHIPPED: install-just-works release
+
+**What shipped (three commits this cycle + release):**
+
+1. **Permissions UX — the #1 adoption stall, fixed at the root.** `fn_hotkey.rs` retries CGEventTap creation every 3s, so granting Input Monitoring mid-onboarding arms the Fn key within seconds — no relaunch. The onboarding wizard (already live-polling at 700ms with auto-advance) now composes with this: grant → card flips green → hotkey is genuinely live. Step 6 rebuilt around the bundled model: new `embedded_check` command (`starting|ready|failed`), 1.5s live polling shows "warming up → ready", the advance gate counts the embedded backend, and the copy is honest that STT still needs a free Groq key today. Stale "quit + relaunch" copy removed from Settings; Lucide icons replace emoji in system UI.
+2. **Groq key in the macOS Keychain** (`keyring` 3.6.3 → Security framework). Idempotent sentinel-free migration off plaintext `settings.json`; graceful file fallback when the Keychain refuses; key edits/clears in the UI sync the Keychain item (`ai.funbutton.desktop` / `groq_api_key`).
+3. **Sprint 2 audit:** all items verified genuinely shipped in code (5 modes + frontmost-app classifier, dictionary prompt injection, SQLite history + ⌘⇧H, ⌘⇧V re-paste, hotkey remap UI with hot-swap, embedded Qwen with vendor payload intact + `llama-server --version` runs).
+
+**Release:** https://github.com/todddickerson/funbutton/releases/tag/v0.1.2
+- `FunButton-v0.1.2-macos-arm64.dmg` — 1.1 GB (bundled Qwen 2.5 1.5B), sha256 `f13bafd42e722f4fbe5a156d8fd97baf318abe30fe70944d7d8af7fda240860a`
+
+**Install steps (also in release notes):**
+1. Download the DMG, drag FunButton → Applications.
+2. `sudo xattr -cr /Applications/FunButton.app` (unsigned build — Gatekeeper bypass).
+3. Launch; onboarding walks the three permissions with live auto-advance.
+4. Hold **Fn**, talk, release.
+
+**Verified on this machine (real install, not just compile):**
+- `cargo check` + `cargo build --release` + `tsc --noEmit` clean throughout; bundle Info.plist has all three usage descriptions + `LSUIElement`, version 0.1.2.
+- Installed to `/Applications` over v0.1.1 and launched: log shows `migrated Groq API key from settings.json into the macOS Keychain` → `settings.json` key field now empty, `security find-generic-password -s ai.funbutton.desktop -a groq_api_key` finds the item.
+- `Fn key tap installed (Input Monitoring granted); running CFRunLoop` — hotkey armed.
+- `llama-server ready at http://127.0.0.1:59557 (8846ms)` — embedded cleanup live from the installed bundle's resources.
+- v0.1.2 is running in the tray on the Mac Studio right now, with the real Groq key in the Keychain.
+
+**Known issues (carried in release notes):**
+- STT still requires a Groq key (free) — bundled whisper.cpp (~75 MB tiny.en) is the next "no key, ever" step.
+- arm64-only; Intel Macs can't run the embedded backend.
+- Unsigned — xattr step required until we buy a signing cert.
+- Real-Fn-keypress E2E still benefits from a human tap (CGEvent synthesis can't fake the SecondaryFn flag without Accessibility on the synthesizer); every layer beneath it is verified, and the Test Hotkey button bisects it in-app.
+
+**Next (v0.2 candidates, per PRD Sprint 3 + carried items):** bundled Whisper for zero-key STT, Tauri auto-updater on GH Releases, smart dictionary/snippets/command mode (read QUALITY-MATCH-SPEC.md first), 30s demo video, universal binary.
+
+**Blocked:** none for the desktop track. (Stripe keys + CF zone permission still block monetization — unchanged, documented in the 2026-05-12 entry.)
+
+---
+
 ## 2026-08-01 16:50 — Groq key moved into the macOS Keychain
 
 **Done:**
