@@ -427,7 +427,7 @@ function Step6({
           <div className="ob-tile-title">Bring your Groq key</div>
           <div className="ob-tile-body">
             <p>
-              Powers speech-to-text + ~300 ms cleanup. We never see the key — it stays on this Mac.
+              Powers speech-to-text + ~300 ms cleanup. We never see the key — it lives in your macOS Keychain.
               {" "}<a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">Grab one free →</a>
             </p>
             <input

@@ -8,6 +8,7 @@ mod groq;
 mod history;
 mod hotkey;
 mod inject;
+mod keychain;
 mod ollama;
 mod pipeline;
 mod state;
@@ -18,7 +19,7 @@ use crate::state::{AppState, AppStateHandle, HotkeyKind, Settings, Status};
 
 use parking_lot::Mutex as PMutex;
 use serde::Serialize;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use tauri::{
@@ -59,6 +60,24 @@ fn save_settings(
     state: tauri::State<'_, AppStateHandle>,
     settings: Settings,
 ) -> Result<(), String> {
+    // Keep the Keychain in sync when the key changes. On Keychain failure the
+    // flag flips off so persist() falls back to writing the key into the file
+    // — degraded at-rest protection beats losing the key on next launch.
+    let old_key = state.settings.lock().groq_api_key.clone();
+    if settings.groq_api_key != old_key {
+        if settings.groq_api_key.trim().is_empty() {
+            keychain::delete_groq_key();
+            KEY_IN_KEYCHAIN.store(false, Ordering::SeqCst);
+        } else {
+            match keychain::set_groq_key(&settings.groq_api_key) {
+                Ok(()) => KEY_IN_KEYCHAIN.store(true, Ordering::SeqCst),
+                Err(e) => {
+                    log::warn!("keychain write failed; key stays in settings.json: {e:#}");
+                    KEY_IN_KEYCHAIN.store(false, Ordering::SeqCst);
+                }
+            }
+        }
+    }
     persist(&settings).map_err(|e| e.to_string())?;
     // Hot-swap the armed hotkey if the user changed it. Both Fn and Right
     // Option listeners are already running; flipping the atomic flips which
@@ -356,11 +375,35 @@ fn dirs_home() -> std::path::PathBuf {
     std::path::PathBuf::from(".")
 }
 
+/// True while the current Groq key is known to be safely in the Keychain —
+/// persist() then keeps the settings file's key field blank. Flips off when a
+/// Keychain write fails so the file becomes the fallback store.
+static KEY_IN_KEYCHAIN: AtomicBool = AtomicBool::new(false);
+
 fn load_settings() -> Settings {
     let p = settings_path();
     if let Ok(bytes) = std::fs::read(&p) {
         if let Ok(mut s) = serde_json::from_slice::<Settings>(&bytes) {
-            // Refresh API key from env if file's is empty
+            let mut migrated = false;
+            if !s.groq_api_key.trim().is_empty() {
+                // Legacy plaintext key in the file (pre-v0.1.2) — move it
+                // into the Keychain and blank the file copy. Idempotent: once
+                // blanked this branch never runs again for that key.
+                match keychain::set_groq_key(&s.groq_api_key) {
+                    Ok(()) => {
+                        KEY_IN_KEYCHAIN.store(true, Ordering::SeqCst);
+                        migrated = true;
+                        log::info!("migrated Groq API key from settings.json into the macOS Keychain");
+                    }
+                    Err(e) => {
+                        log::warn!("keychain migration failed; key stays in settings.json: {e:#}");
+                    }
+                }
+            } else if let Some(k) = keychain::get_groq_key() {
+                s.groq_api_key = k;
+                KEY_IN_KEYCHAIN.store(true, Ordering::SeqCst);
+            }
+            // Refresh API key from env if both file and Keychain are empty
             if s.groq_api_key.is_empty() {
                 if let Ok(env_key) = std::env::var("GROQ_API_KEY") {
                     s.groq_api_key = env_key;
@@ -372,15 +415,32 @@ fn load_settings() -> Settings {
             // listener was actually doing — that mismatch was the v0.1.0
             // bug that sent users hunting for a key the app wasn't watching.
             s.hotkey_label = s.hotkey_kind.label().to_string();
+            // Rewrite the file so a just-migrated key disappears from disk.
+            if migrated {
+                let _ = persist(&s);
+            }
             return s;
         }
     }
-    Settings::default()
+    let mut s = Settings::default();
+    // Fresh settings file but a key may survive in the Keychain from a
+    // previous install (user wiped ~/.funbutton, kept the login keychain).
+    if s.groq_api_key.is_empty() {
+        if let Some(k) = keychain::get_groq_key() {
+            s.groq_api_key = k;
+            KEY_IN_KEYCHAIN.store(true, Ordering::SeqCst);
+        }
+    }
+    s
 }
 
 fn persist(s: &Settings) -> anyhow::Result<()> {
     let p = settings_path();
-    let json = serde_json::to_vec_pretty(s)?;
+    let mut on_disk = s.clone();
+    if KEY_IN_KEYCHAIN.load(Ordering::SeqCst) {
+        on_disk.groq_api_key = String::new();
+    }
+    let json = serde_json::to_vec_pretty(&on_disk)?;
     std::fs::write(p, json)?;
     Ok(())
 }

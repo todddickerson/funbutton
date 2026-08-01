@@ -515,6 +515,7 @@ function App() {
             <div className="fb-hint">
               Bring your own key — get one free at{" "}
               <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">console.groq.com/keys</a>.
+              {" "}Stored in your macOS Keychain, never written to disk in plaintext.
             </div>
           </div>
 

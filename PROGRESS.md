@@ -2,6 +2,24 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-08-01 16:50 — Groq key moved into the macOS Keychain
+
+**Done:**
+- **New `keychain.rs`** (keyring crate `=3.6.3`, `apple-native` → Security framework). Login-Keychain item: service `ai.funbutton.desktop`, account `groq_api_key`.
+- **Idempotent, sentinel-free migration** (lesson from freeflow's `keychain_migration_done` bug — their global flag orphaned every secret except the first): on load, a non-empty key found in `settings.json` is written to the Keychain and the file field is blanked; once blanked the branch never fires again. No version flag to get wrong.
+- **Graceful degradation everywhere:** if the Keychain refuses (denied ACL prompt, locked keychain, ad-hoc-signed rebuild changing code identity), a `KEY_IN_KEYCHAIN` flag stays false and `persist()` keeps writing the key to `settings.json` as before — worse at-rest protection, but the key is never lost and the app never hard-fails. Keychain read failure at launch falls back file → env var.
+- **Key edits in Settings/onboarding sync the Keychain** via `save_settings` (write on change, delete on clear). Clearing the key deletes the Keychain item.
+- **Fresh-install recovery:** wiping `~/.funbutton` but keeping the login keychain restores the key on next launch.
+- UI copy updated: Settings key hint + onboarding tile now say the key lives in the macOS Keychain.
+
+**Verified:** `cargo check` + `tsc --noEmit` clean. Runtime migration check (settings.json key blanked + `security find-generic-password` finds the item) happens at the v0.1.2 build/launch step below.
+
+**Next:** Sprint 2 feature audit, then v0.1.2 build + DMG + release.
+
+**Blocked:** none.
+
+---
+
 ## 2026-08-01 16:35 — Permissions UX: live-heal Fn tap + onboarding step 6 rework
 
 **Done:**
