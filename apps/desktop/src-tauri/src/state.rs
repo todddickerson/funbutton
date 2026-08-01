@@ -1,4 +1,5 @@
 use crate::embedded_llm::EmbeddedServerHandle;
+use crate::embedded_stt::{EmbeddedStt, EmbeddedSttHandle};
 use crate::history::History;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,24 @@ pub enum Backend {
 impl Default for Backend {
     fn default() -> Self {
         Backend::Auto
+    }
+}
+
+/// Which engine transcribes speech. On-device is the default — a fresh
+/// install dictates with zero API keys, fully offline. Groq is the optional
+/// faster/cloud path (needs a key).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SttBackend {
+    /// Bundled whisper base.en via transcribe-cpp (Metal). Default.
+    Local,
+    /// Groq Whisper Turbo (cloud, BYOK) — or the licensed cloud proxy.
+    Groq,
+}
+
+impl Default for SttBackend {
+    fn default() -> Self {
+        SttBackend::Local
     }
 }
 
@@ -90,6 +109,8 @@ pub struct Settings {
     pub groq_api_key: String,
     #[serde(default)]
     pub backend: Backend,
+    #[serde(default)]
+    pub stt_backend: SttBackend,
     #[serde(default = "default_ollama_model")]
     pub ollama_model: String,
     #[serde(default = "default_ollama_url")]
@@ -143,6 +164,7 @@ impl Default for Settings {
         Self {
             groq_api_key: std::env::var("GROQ_API_KEY").unwrap_or_default(),
             backend: Backend::default(),
+            stt_backend: SttBackend::default(),
             ollama_model: default_ollama_model(),
             ollama_url: default_ollama_url(),
             words_today: 0,
@@ -196,6 +218,9 @@ pub struct AppState {
     /// Set when the bundled llama-server failed to start, so the UI can
     /// distinguish "still warming up" from "not going to happen".
     pub embedded_error: Mutex<Option<String>>,
+    /// Bundled on-device whisper engine. Always present; its internal status
+    /// tracks starting/ready/failed.
+    pub stt: EmbeddedSttHandle,
     /// Which hotkey is "armed" right now — both listeners run, but only the
     /// one whose kind matches this atomic emits Down/Up events. Lets us
     /// hot-swap the active hotkey without restarting the app.
@@ -220,6 +245,7 @@ impl AppState {
             history,
             embedded: Mutex::new(None),
             embedded_error: Mutex::new(None),
+            stt: EmbeddedStt::new(),
             armed_hotkey: armed,
             hotkey_tx: Mutex::new(None),
         })

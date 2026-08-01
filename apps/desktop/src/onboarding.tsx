@@ -6,7 +6,8 @@ import "./onboarding.css";
 
 type HotkeyKind = "fn" | "right_option";
 type Backend = "auto" | "groq" | "local";
-type EmbeddedStatus = "starting" | "ready" | "failed";
+type EngineStatus = "starting" | "ready" | "failed";
+interface EmbeddedStatus { cleanup: EngineStatus; stt: EngineStatus }
 
 interface Settings {
   groq_api_key: string;
@@ -35,7 +36,7 @@ function App() {
   const [groqState, setGroqState] = useState<"idle" | "checking" | "ok" | "bad">("idle");
   const [groqError, setGroqError] = useState<string>("");
   const [ollamaUp, setOllamaUp] = useState<boolean | null>(null);
-  const [embedded, setEmbedded] = useState<EmbeddedStatus>("starting");
+  const [embedded, setEmbedded] = useState<EmbeddedStatus>({ cleanup: "starting", stt: "starting" });
 
   const [hotkeyKind, setHotkeyKind] = useState<HotkeyKind>("fn");
 
@@ -103,7 +104,7 @@ function App() {
         .catch(() => { if (!cancelled) setOllamaUp(false); });
       invoke<EmbeddedStatus>("embedded_check")
         .then((v) => { if (!cancelled) setEmbedded(v); })
-        .catch(() => { if (!cancelled) setEmbedded("failed"); });
+        .catch(() => { if (!cancelled) setEmbedded({ cleanup: "failed", stt: "failed" }); });
     };
     tick();
     const id = setInterval(tick, 1500);
@@ -131,7 +132,8 @@ function App() {
 
   function canAdvance() {
     if (step === 2) return micPerm === "granted" && accPerm === "granted" && imPerm === "granted";
-    if (step === 6) return embedded === "ready" || groqState === "ok" || ollamaUp === true;
+    // Dictation needs speech-to-text: the bundled model or a Groq key.
+    if (step === 6) return embedded.stt === "ready" || groqState === "ok";
     if (step === 7) return true;
     return true;
   }
@@ -404,22 +406,34 @@ function Step6({
   embedded: EmbeddedStatus;
   onNext: () => void;
 }) {
-  const ready = embedded === "ready" || groqState === "ok" || ollamaUp === true;
+  const ready = embedded.stt === "ready" || groqState === "ok";
+  const bothReady = embedded.stt === "ready" && embedded.cleanup === "ready";
+  const anyFailed = embedded.stt === "failed" || embedded.cleanup === "failed";
+  const stripState = bothReady ? "ready" : anyFailed ? "failed" : "starting";
   return (
     <section className="ob-slide">
-      <h1 className="ob-h1 small">Cleanup is already on board.</h1>
+      <h1 className="ob-h1 small">No API key. No account. Ever.</h1>
       <p className="ob-sub small">
-        A local model ships inside the app — no account, no key, works offline.
+        Speech-to-text and cleanup both run on models bundled inside the app — fully offline.
       </p>
-      <div className={`ob-embedded ${embedded}`}>
+      <div className={`ob-embedded ${stripState}`}>
         <span className="ob-embedded-icon"><Cpu size={14} /></span>
-        {embedded === "ready" && <span>Bundled model ready (Qwen 2.5, on-device) — cleanup needs zero setup.</span>}
-        {embedded === "starting" && <span>Bundled model warming up… usually a few seconds on first launch.</span>}
-        {embedded === "failed" && <span>Bundled model couldn&apos;t start on this Mac — use one of the options below.</span>}
+        {bothReady && <span>On-device models ready (Whisper + Qwen 2.5) — dictation works right now, zero setup.</span>}
+        {stripState === "starting" && (
+          <span>
+            On-device models warming up… speech-to-text {embedded.stt === "ready" ? "✓" : "…"} · cleanup {embedded.cleanup === "ready" ? "✓" : "…"}
+          </span>
+        )}
+        {stripState === "failed" && (
+          <span>
+            {embedded.stt === "failed"
+              ? "On-device speech-to-text couldn't start — paste a Groq key below to dictate."
+              : "On-device cleanup couldn't start — dictation still works; add a Groq key or Ollama for cleanup."}
+          </span>
+        )}
       </div>
       <p className="ob-sub small">
-        Speech-to-text still uses Groq Whisper today (a free key), and the key also unlocks much
-        stronger cleanup. Optional now — you can add it later in Settings.
+        Want it faster and even more accurate? Add the optional cloud path below.
       </p>
       <div className="ob-tiles">
         <div className={`ob-tile ${groqState === "ok" ? "good" : ""}`}>

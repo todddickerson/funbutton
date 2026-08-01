@@ -3,6 +3,7 @@ mod audio;
 mod cleanup;
 mod cloud;
 mod embedded_llm;
+mod embedded_stt;
 mod fn_hotkey;
 mod groq;
 mod history;
@@ -138,17 +139,23 @@ async fn ollama_check(state: tauri::State<'_, AppStateHandle>) -> Result<bool, S
     Ok(ollama::is_available(&url).await)
 }
 
-/// Status of the bundled llama.cpp cleanup backend.
-/// "ready" | "starting" | "failed" — polled by onboarding step 6.
+/// Status of the bundled on-device engines, polled by onboarding step 6 and
+/// the Settings backend hint. Each field is "ready" | "starting" | "failed".
+/// `stt` is the one that gates keyless dictation; `cleanup` always has the
+/// raw-passthrough fallback behind it.
 #[tauri::command]
-fn embedded_check(state: tauri::State<'_, AppStateHandle>) -> String {
-    if state.embedded.lock().is_some() {
-        "ready".into()
+fn embedded_check(state: tauri::State<'_, AppStateHandle>) -> serde_json::Value {
+    let cleanup = if state.embedded.lock().is_some() {
+        "ready"
     } else if state.embedded_error.lock().is_some() {
-        "failed".into()
+        "failed"
     } else {
-        "starting".into()
-    }
+        "starting"
+    };
+    serde_json::json!({
+        "cleanup": cleanup,
+        "stt": state.stt.status().label(),
+    })
 }
 
 #[tauri::command]
@@ -604,6 +611,10 @@ pub fn run() {
                 });
             }
 
+            // Load the bundled on-device whisper model in the background —
+            // this is what makes a fresh keyless install able to dictate.
+            app_state.stt.init(&app.handle().clone());
+
             // Spawn the bundled local-inference server in the background.
             // Loads ~1 s after the GGUF is in OS page cache; cold-start is a
             // few seconds. The pipeline gracefully falls back to other
@@ -672,6 +683,15 @@ pub fn run() {
                         }
                     }
                     "quit" => {
+                        // Drop native resources explicitly — process exit
+                        // skips Drop impls, which would orphan the
+                        // llama-server child and can SIGABRT ggml-metal in
+                        // C++ static destructors with a live Metal context.
+                        let st = app.state::<AppStateHandle>();
+                        if let Some(srv) = st.embedded.lock().take() {
+                            srv.kill();
+                        }
+                        st.stt.unload();
                         app.exit(0);
                     }
                     _ => {}
@@ -789,7 +809,7 @@ fn handle_hotkey_loop(
 
                             // Insert history row BEFORE paste, so even if paste fails the
                             // cleaned text is preserved.
-                            let frontmost = crate::app_detect::FrontApp::detect().label();
+                            let frontmost = r.frontmost.clone();
                             let model_used = match r.backend_used {
                                 "local" => format!("ollama-{}", state_h.settings.lock().ollama_model),
                                 _ => format!("groq-{}", crate::groq::LLAMA_MODEL),

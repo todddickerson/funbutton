@@ -23,8 +23,8 @@ function Pill() {
     status === "error" ? "⚠ error" : "● idle";
   const sub =
     status === "recording" ? "release Fn to send" :
-    status === "transcribing" ? "whisper turbo" :
-    status === "cleaning" ? "llama 3.3" :
+    status === "transcribing" ? "whisper · on-device" :
+    status === "cleaning" ? "local cleanup" :
     status === "pasting" ? "" :
     status === "error" ? "tap Fn again" : "";
 

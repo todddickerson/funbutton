@@ -20,6 +20,35 @@ impl Mode {
     }
 }
 
+/// Built-in developer vocabulary. Two jobs: (1) biases the on-device whisper
+/// via its initial prompt so "git", "npm", "kubectl" don't come out as
+/// "get", "NPM", "cube control"; (2) injected into the cleanup prompt in
+/// code mode so spellings land verbatim. User dictionary terms always take
+/// priority over these.
+pub const DEV_DICTIONARY: &[&str] = &[
+    // version control / collaboration
+    "git", "GitHub", "GitLab", "PR", "repo", "commit", "rebase", "merge conflict", "branch",
+    "diff", "stash", "cherry-pick", "changelog", "monorepo", "CI/CD",
+    // package managers / runtimes / languages
+    "npm", "pnpm", "yarn", "npx", "Node.js", "TypeScript", "JavaScript", "Python", "Rust",
+    "cargo", "Go", "Swift", "Kotlin", "Ruby", "Rails", "Deno", "Bun",
+    // infra / cloud / CLI
+    "kubectl", "Kubernetes", "Docker", "Dockerfile", "Terraform", "AWS", "S3", "Lambda",
+    "Cloudflare", "Vercel", "nginx", "systemd", "curl", "grep", "ssh", "sudo", "chmod",
+    "bash", "zsh", "CLI", "stdin", "stdout", "stderr", "cron", "tmux", "vim",
+    // formats / protocols
+    "JSON", "YAML", "TOML", "Markdown", "HTML", "CSS", "SQL", "regex", "UUID", "API",
+    "REST", "GraphQL", "gRPC", "WebSocket", "OAuth", "JWT", "CORS", "HTTP", "TLS", "DNS",
+    // language / code constructs
+    "async", "await", "callback", "promise", "closure", "mutex", "enum", "struct",
+    "boolean", "null", "undefined", "NaN", "stack trace", "segfault", "linter", "TODO",
+    // casing / identifiers
+    "camelCase", "snake_case", "PascalCase", "kebab-case", "SCREAMING_SNAKE_CASE",
+    // common tools / frameworks
+    "React", "Next.js", "Vite", "Tailwind", "Redis", "Postgres", "SQLite", "Ollama",
+    "localhost", "env var", "dotenv", "webhook", "middleware", "endpoint",
+];
+
 pub fn system_prompt(mode: Mode) -> &'static str {
     match mode {
         Mode::Code => CODE_PROMPT,

@@ -84,7 +84,8 @@
       "vendor/llama/llama-server": "vendor/llama/llama-server",
       "vendor/llama/lib*.dylib": "vendor/llama/",
       "vendor/llama/qwen2.5-1.5b-instruct-q4_k_m.gguf": "vendor/llama/qwen2.5-1.5b-instruct-q4_k_m.gguf",
-      "vendor/llama/LICENSE": "vendor/llama/LICENSE"
+      "vendor/llama/LICENSE": "vendor/llama/LICENSE",
+      "vendor/whisper/whisper-base.en-Q8_0.gguf": "vendor/whisper/whisper-base.en-Q8_0.gguf"
     },
     "macOS": {
       "minimumSystemVersion": "12.0"

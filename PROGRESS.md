@@ -2,6 +2,29 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-08-01 17:55 — ON-DEVICE STT: "no API key, ever" is now literally true
+
+**The category (Handy 28k★, unramble, VoiceInk) is on-device; needing a Groq key for STT was our biggest weakness per `OSS-LANDSCAPE-DEEP-RESEARCH-2026-08-01.md`. Killed it.**
+
+**Done:**
+- **`embedded_stt.rs`** — bundled whisper base.en (GGUF Q8_0, 81 MB, from Handy's HF mirrors, sha256-pinned in `fetch-vendor-deps.sh`) via **`transcribe-cpp` 0.1.3** — the same whisper.cpp/ggml wrapper Handy uses, statically linked with the Metal backend (zero extra dylibs). Chosen over raw `whisper-rs` after studying Handy's tree: one API covers whisper today AND Parakeet-GGUF tomorrow, `session.run(&audio).text` with no segment-loop/`[BLANK_AUDIO]` plumbing (we still strip artifacts defensively).
+- **WAV → 16 kHz mono** decode path (hound + `rubato` FftFixedIn, Handy's resampler choice), sub-second inputs padded (whisper.cpp misbehaves under ~1 s).
+- **`stt_backend` setting: `local` (DEFAULT) | `groq`.** Whichever is picked, the others are silent fallbacks (local → licensed-cloud → BYOK-groq, or cloud-first when groq selected). Existing installs flip to on-device by default on upgrade — intended.
+- **Whisper initial-prompt bias**: user dictionary + (in code mode) the new built-in `DEV_DICTIONARY` (~130 dev terms) feed whisper's initial prompt, so "git/npm/kubectl/PR" transcribe correctly cased at the STT layer, before cleanup even runs. Mode detection moved BEFORE transcription to make this possible (also: frontmost app now detected once per dictation instead of twice).
+- **Crash containment**: release profile switched from `panic=abort` to unwind; ggml inference wrapped in `catch_unwind` so a native panic degrades to the fallback chain instead of killing the app (Handy's pattern).
+- **Quit-path resource teardown** in the tray handler — fixes TWO latent bugs: the orphaned `llama-server` child on quit (Drop never ran on `app.exit`), and the ggml-metal SIGABRT risk from a live Metal context at C++ static-destructor time.
+- **UI**: new Settings "Transcription" section (on-device default / groq cloud pills + live model status); `embedded_check` now returns `{cleanup, stt}`; onboarding step 6 headline is now **"No API key. No account. Ever."** with a dual-engine status strip; Groq tile demoted to "optional cloud path"; welcome banner + pill copy updated.
+
+**Verified:**
+- `cargo check` + `tsc --noEmit` + unit tests clean.
+- **Offline integration test with real speech** (`say`-generated 48 kHz WAV → resampler → bundled GGUF, Metal): transcript came back **verbatim-perfect including term casing**: `"Hold the Fun button and dictate a git commit message, then run npm install and push the PR."` — 2.4 s inference on M-series, no network, no key. Test is committed (`transcribes_real_wav_offline`, `--ignored`-gated).
+
+**Next:** dev-first polish (app_detect coverage, dev vocab in cleanup prompt, pill mode display), then keyless E2E on a real install + v0.1.3 release.
+
+**Blocked:** none.
+
+---
+
 ## 2026-08-01 17:05 — v0.1.2 SHIPPED: install-just-works release
 
 **What shipped (three commits this cycle + release):**

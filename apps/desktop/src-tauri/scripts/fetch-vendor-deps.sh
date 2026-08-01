@@ -50,10 +50,30 @@ else
   echo "  ✓ model already present ($(du -h "$MODEL_PATH" | awk '{print $1}'))"
 fi
 
+# --- on-device STT model (whisper base.en, GGUF Q8_0) ---
+WHISPER_VENDOR="${HERE%/scripts}/vendor/whisper"
+mkdir -p "$WHISPER_VENDOR"
+WHISPER_MODEL="whisper-base.en-Q8_0.gguf"
+WHISPER_URL="https://huggingface.co/handy-computer/whisper-base.en-gguf/resolve/main/${WHISPER_MODEL}"
+WHISPER_SHA256="3b46ca40bccbf7609c68d88a36d96077a04ca7c87f2060ede06f129fac3e7652"
+WHISPER_PATH="$WHISPER_VENDOR/$WHISPER_MODEL"
+if [[ ! -s "$WHISPER_PATH" ]]; then
+  echo "→ downloading $WHISPER_MODEL (~81 MB)…"
+  curl -L --retry 3 --fail --output "$WHISPER_PATH" "$WHISPER_URL"
+  echo "  ✓ whisper model installed at $WHISPER_PATH"
+else
+  echo "  ✓ whisper model already present ($(du -h "$WHISPER_PATH" | awk '{print $1}'))"
+fi
+ACTUAL_SHA="$(shasum -a 256 "$WHISPER_PATH" | awk '{print $1}')"
+if [[ "$ACTUAL_SHA" != "$WHISPER_SHA256" ]]; then
+  echo "❌ $WHISPER_MODEL sha256 mismatch (got $ACTUAL_SHA) — delete and re-run" >&2
+  exit 1
+fi
+
 # --- sanity checks ---
 if ! "$VENDOR/llama-server" --version >/dev/null 2>&1; then
   echo "⚠ llama-server --version failed — Gatekeeper may be blocking. Run once manually:"
   echo "    xattr -dr com.apple.quarantine $VENDOR"
 fi
 
-echo "✅ vendor deps ready at $VENDOR"
+echo "✅ vendor deps ready at $VENDOR and $WHISPER_VENDOR"

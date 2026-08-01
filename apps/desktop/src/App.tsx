@@ -5,14 +5,17 @@ import { AlertTriangle } from "lucide-react";
 import "./App.css";
 
 type Backend = "auto" | "groq" | "local" | "embedded";
+type SttBackend = "local" | "groq";
 type ModeOverride = "auto" | "code" | "email" | "slack" | "raw";
 type HotkeyKind = "fn" | "right_option";
+type EngineStatus = "starting" | "ready" | "failed";
 
 type PremiumModel = "fast" | "premium-haiku" | "premium-sonnet" | "premium-opus" | "premium-gpt41";
 
 interface Settings {
   groq_api_key: string;
   backend: Backend;
+  stt_backend: SttBackend;
   ollama_model: string;
   ollama_url: string;
   words_today: number;
@@ -81,6 +84,7 @@ function App() {
   const [ollamaUp, setOllamaUp] = useState<boolean | null>(null);
   // null = unknown / still spawning, true = /health 200, false = spawn failed
   const [embeddedReady, setEmbeddedReady] = useState<boolean | null>(false);
+  const [sttStatus, setSttStatus] = useState<EngineStatus>("starting");
   const [saved, setSaved] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [historyQuery, setHistoryQuery] = useState("");
@@ -140,6 +144,15 @@ function App() {
     invoke<Settings>("get_settings").then(setSettings);
     invoke<string>("get_status").then(setStatus);
     invoke<boolean>("ollama_check").then(setOllamaUp).catch(() => setOllamaUp(false));
+    // Snapshot both embedded engines — the ready/failed events may have
+    // fired before this window mounted.
+    invoke<{ cleanup: EngineStatus; stt: EngineStatus }>("embedded_check")
+      .then((s) => {
+        setSttStatus(s.stt);
+        if (s.cleanup === "ready") setEmbeddedReady(true);
+        else if (s.cleanup === "failed") setEmbeddedReady(false);
+      })
+      .catch(() => {});
     refreshPerms();
     refreshHistory();
 
@@ -178,6 +191,11 @@ function App() {
       setEmbeddedReady(false);
       console.warn("embedded LLM failed:", e.payload);
     });
+    const unSttReady = listen("funbutton:stt-ready", () => setSttStatus("ready"));
+    const unSttFail = listen<string>("funbutton:stt-failed", (e) => {
+      setSttStatus("failed");
+      console.warn("embedded STT failed:", e.payload);
+    });
     const unL = listen("funbutton:license-activated", () => {
       invoke<Settings>("get_settings").then((s) => {
         setSettings(s);
@@ -202,6 +220,8 @@ function App() {
       unL.then((u) => u());
       unEmbReady.then((u) => u());
       unEmbFail.then((u) => u());
+      unSttReady.then((u) => u());
+      unSttFail.then((u) => u());
       window.removeEventListener("focus", onFocus);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -354,17 +374,17 @@ function App() {
         <div className="fb-loading">loading…</div>
       ) : tab === "settings" ? (
         <div className="fb-form">
-          {settings.groq_api_key.trim() === "" && ollamaUp === false && (
+          {settings.groq_api_key.trim() === "" && (
             <div className="fb-welcome">
               <div className="fb-welcome-title">welcome — meet the Fun Button.</div>
               <div className="fb-welcome-body">
                 <strong>FunButton = Fn Button.</strong> The key at the bottom-left corner of your Mac keyboard.
                 You probably never used it. We just gave it a job.<br/><br/>
-                <strong>Step 1.</strong> Pick a cleanup backend:<br/>
-                &nbsp;&nbsp;a) paste a Groq API key below (free at console.groq.com/keys), <em>or</em><br/>
-                &nbsp;&nbsp;b) install Ollama and run <code>ollama pull qwen2.5:1.5b</code> — fully local, no API key.<br/><br/>
-                <strong>Step 2.</strong> Close this window. Hold <kbd>fn</kbd> in any text field, talk, release.<br/>
-                <strong>Step 3.</strong> macOS will ask for <strong>Microphone</strong>, <strong>Accessibility</strong>, and <strong>Input Monitoring</strong>. Grant all three. The Input Monitoring one is what lets us see Fn — macOS doesn't expose it as a normal modifier.
+                <strong>Zero setup.</strong> Speech-to-text and cleanup both run on models bundled inside the app —
+                no account, no API key, works offline.<br/>
+                <strong>Step 1.</strong> Hold <kbd>fn</kbd> in any text field, talk, release.<br/>
+                <strong>Step 2.</strong> macOS will ask for <strong>Microphone</strong>, <strong>Accessibility</strong>, and <strong>Input Monitoring</strong>. Grant all three — the Input Monitoring one is what lets us see Fn.<br/><br/>
+                Want faster, stronger cloud processing? Paste a free Groq key below — strictly optional.
               </div>
             </div>
           )}
@@ -482,6 +502,27 @@ function App() {
           </div>
 
           <div className="fb-section">
+            <label className="fb-label">Transcription (speech-to-text)</label>
+            <div className="fb-radios">
+              {(["local", "groq"] as const).map(b => (
+                <button
+                  key={b}
+                  className={`fb-pill ${settings.stt_backend === b ? "on" : ""}`}
+                  onClick={() => update("stt_backend", b)}
+                >{b === "local" ? "on-device (default)" : "groq cloud"}</button>
+              ))}
+            </div>
+            <div className="fb-hint">
+              <strong>on-device</strong> uses the bundled Whisper model — zero keys, works offline, audio never leaves this Mac.{" "}
+              <strong>groq cloud</strong> is faster and more accurate but needs a key and internet.
+              Whichever you pick, the other stays as a silent fallback.
+              {sttStatus === "ready" && <span className="fb-up"> · on-device model ready ✓</span>}
+              {sttStatus === "starting" && <span className="fb-down"> · on-device model loading…</span>}
+              {sttStatus === "failed" && <span className="fb-down"> · on-device model failed — Groq key required</span>}
+            </div>
+          </div>
+
+          <div className="fb-section">
             <label className="fb-label">Cleanup backend</label>
             <div className="fb-radios">
               {(["auto","embedded","groq","local"] as const).map(b => (
@@ -513,7 +554,8 @@ function App() {
               placeholder="gsk_…"
             />
             <div className="fb-hint">
-              Bring your own key — get one free at{" "}
+              Optional — everything works without it. A key unlocks Groq cloud transcription + Llama 3.3 cleanup (faster, stronger).
+              Get one free at{" "}
               <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">console.groq.com/keys</a>.
               {" "}Stored in your macOS Keychain, never written to disk in plaintext.
             </div>
