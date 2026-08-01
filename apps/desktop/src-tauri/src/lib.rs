@@ -802,7 +802,14 @@ fn handle_hotkey_loop(
                     match result {
                         Ok(r) => {
                             *state_h.status.lock() = Status::Pasting;
-                            emit_status(&app_h, Status::Pasting, None);
+                            // Surface the detected mode on the pill — makes
+                            // the code-aware behavior visible ("pasting —
+                            // code mode · Cursor").
+                            emit_status(
+                                &app_h,
+                                Status::Pasting,
+                                Some(format!("{} mode · {}", r.mode, r.frontmost)),
+                            );
                             let to_paste = r.cleaned.clone();
                             *state_h.last_cleaned.lock() = to_paste.clone();
                             let words = to_paste.split_whitespace().count();

@@ -139,19 +139,24 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
     }
     *state.last_transcript.lock() = raw.clone();
     let base_prompt = cleanup::system_prompt(mode);
-    let prompt = if dictionary.is_empty() {
-        base_prompt.to_string()
-    } else {
+    let mut prompt = base_prompt.to_string();
+    if matches!(mode, Mode::Code) {
+        prompt.push_str(
+            "\n\nDEV VOCABULARY (normalize to these exact spellings and casings when the user says them): ",
+        );
+        prompt.push_str(&cleanup::DEV_DICTIONARY.join(", "));
+    }
+    if !dictionary.is_empty() {
         let dict_lines: Vec<String> = dictionary
             .iter()
             .filter(|s| !s.trim().is_empty())
             .map(|s| format!("- {s}"))
             .collect();
-        format!(
-            "{base_prompt}\n\nUSER DICTIONARY (preserve these names and spellings exactly when they appear, even if Whisper transcribed them slightly differently):\n{dict}",
-            dict = dict_lines.join("\n")
-        )
-    };
+        prompt.push_str(&format!(
+            "\n\nUSER DICTIONARY (preserve these names and spellings exactly when they appear, even if the transcriber heard them slightly differently — these outrank the dev vocabulary):\n{}",
+            dict_lines.join("\n")
+        ));
+    }
 
     *state.status.lock() = Status::Cleaning;
 

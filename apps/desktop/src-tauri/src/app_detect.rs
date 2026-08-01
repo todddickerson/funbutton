@@ -8,6 +8,8 @@ pub enum FrontApp {
     Vim,
     Terminal,
     Xcode,
+    /// Any other code editor (Zed, Windsurf, Sublime, Emacs, …) — code mode.
+    Editor(String),
     Mail,
     Slack,
     Discord,
@@ -44,14 +46,16 @@ impl FrontApp {
         let n = name.to_lowercase();
         if n.contains("cursor") {
             FrontApp::Cursor
-        } else if n.contains("code") && n.contains("visual") || n == "code" || n == "code - insiders" {
+        } else if n.contains("code") && n.contains("visual") || n == "code" || n == "code - insiders" || n == "vscodium" {
             FrontApp::VSCode
-        } else if n.contains("intellij") || n.contains("pycharm") || n.contains("webstorm") || n.contains("rubymine") || n.contains("rustrover") || n.contains("goland") || n.contains("phpstorm") || n.contains("clion") {
+        } else if n.contains("intellij") || n.contains("pycharm") || n.contains("webstorm") || n.contains("rubymine") || n.contains("rustrover") || n.contains("goland") || n.contains("phpstorm") || n.contains("clion") || n.contains("android studio") || n.contains("datagrip") || n == "fleet" {
             FrontApp::JetBrains
         } else if n == "vim" || n == "neovim" || n == "nvim" || n == "macvim" {
             FrontApp::Vim
-        } else if n == "terminal" || n == "iterm2" || n == "iterm" || n == "warp" || n == "alacritty" || n == "kitty" || n == "ghostty" {
+        } else if n == "terminal" || n == "iterm2" || n == "iterm" || n == "warp" || n == "alacritty" || n == "kitty" || n == "ghostty" || n == "wezterm" || n == "wezterm-gui" || n == "tabby" || n == "hyper" || n == "rio" {
             FrontApp::Terminal
+        } else if n == "zed" || n == "windsurf" || n.contains("sublime text") || n == "nova" || n == "textmate" || n == "bbedit" || n == "emacs" || n == "aquamacs" {
+            FrontApp::Editor(name.to_string())
         } else if n == "xcode" {
             FrontApp::Xcode
         } else if n == "mail" {
@@ -75,6 +79,7 @@ impl FrontApp {
             FrontApp::Vim => "Vim".into(),
             FrontApp::Terminal => "Terminal".into(),
             FrontApp::Xcode => "Xcode".into(),
+            FrontApp::Editor(s) => s.clone(),
             FrontApp::Mail => "Mail".into(),
             FrontApp::Slack => "Slack".into(),
             FrontApp::Discord => "Discord".into(),

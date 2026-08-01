@@ -2,6 +2,23 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-08-01 18:10 — Dev-first behavior forward
+
+**Per the research, "dev-first / code-aware out of the box" is the open cell nobody owns. Made the desktop behavior match the claim:**
+
+- **Editor/terminal coverage widened** (`app_detect.rs`): new `Editor` class → code mode for Zed, Windsurf, Sublime Text, Nova, TextMate, BBEdit, Emacs; JetBrains detection adds Android Studio, DataGrip, Fleet; terminal list adds WezTerm, Tabby, Hyper, Rio; VSCodium → VS Code. Auto mode now lands in code mode across effectively every dev surface.
+- **Built-in `DEV_DICTIONARY` (~130 terms)** now does double duty: biases the on-device whisper via initial prompt (shipped in the STT commit) AND is injected into the code-mode cleanup prompt as a normalize-to-these-spellings block (git, GitHub, npm, kubectl, JSON, camelCase/snake_case, async/await, …). User dictionary explicitly outranks it.
+- **Code prompt additions**: 'double colon' → `::`, 'spread'/'dot dot dot' → `...`, 'optional chain' → `?.`.
+- **The code-aware behavior is now visible**: the pill shows "pasting — code mode · Cursor" (mode + frontmost app) on every dictation.
+
+**Verified:** `cargo check` + `tsc --noEmit` clean.
+
+**Next:** keyless E2E on a real install, then v0.1.3 build + DMG + release.
+
+**Blocked:** none.
+
+---
+
 ## 2026-08-01 17:55 — ON-DEVICE STT: "no API key, ever" is now literally true
 
 **The category (Handy 28k★, unramble, VoiceInk) is on-device; needing a Groq key for STT was our biggest weakness per `OSS-LANDSCAPE-DEEP-RESEARCH-2026-08-01.md`. Killed it.**

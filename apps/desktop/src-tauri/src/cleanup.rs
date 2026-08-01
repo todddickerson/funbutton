@@ -12,7 +12,8 @@ pub enum Mode {
 impl Mode {
     pub fn from_front_app(app: &FrontApp) -> Self {
         match app {
-            FrontApp::Cursor | FrontApp::VSCode | FrontApp::JetBrains | FrontApp::Vim | FrontApp::Terminal | FrontApp::Xcode => Mode::Code,
+            FrontApp::Cursor | FrontApp::VSCode | FrontApp::JetBrains | FrontApp::Vim
+            | FrontApp::Terminal | FrontApp::Xcode | FrontApp::Editor(_) => Mode::Code,
             FrontApp::Mail => Mode::Email,
             FrontApp::Slack | FrontApp::Discord | FrontApp::Messages => Mode::Slack,
             FrontApp::Other(_) | FrontApp::Unknown => Mode::Auto,
@@ -102,6 +103,7 @@ Convert their spoken instructions into the literal code/text they intended. \
 \n- 'not equals' → != ; 'plus equals' → += ; 'minus equals' → -= \
 \n- 'comma' → , ; 'semicolon' → ; ; 'colon' → : ; 'dot' / 'period' → . \
 \n- 'pipe' → | ; 'double pipe' → || ; 'ampersand' → & ; 'double ampersand' → && \
+\n- 'double colon' → :: ; 'spread' / 'dot dot dot' → ... ; 'optional chain' → ?. \
 \n- 'tilde' → ~ ; 'caret' → ^ ; 'percent' → % ; 'asterisk' / 'star' → * \
 \n- 'plus' → + ; 'minus' / 'dash' → - ; 'underscore' → _ ; 'slash' → / ; 'backslash' → \\\\ \
 \n- 'bang' / 'exclamation' → ! ; 'question' / 'question mark' → ? \
