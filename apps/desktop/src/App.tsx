@@ -583,7 +583,7 @@ function App() {
           </div>
 
           <footer className="fb-footer">
-            v0.1.1 · GPLv3 · <a href="https://github.com/todddickerson/funbutton" target="_blank" rel="noreferrer">github</a>
+            v0.1.2 · GPLv3 · <a href="https://github.com/todddickerson/funbutton" target="_blank" rel="noreferrer">github</a>
           </footer>
         </div>
       ) : tab === "license" ? (
