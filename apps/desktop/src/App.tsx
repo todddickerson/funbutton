@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { AlertTriangle } from "lucide-react";
 import "./App.css";
 
 type Backend = "auto" | "groq" | "local" | "embedded";
@@ -401,8 +402,9 @@ function App() {
                 />
               </div>
               {settings.hotkey_kind === "fn" && !perms.input_monitoring && (
-                <div className="fb-hint" style={{color: "#ff9966", marginTop: 6}}>
-                  ⚠ The Fn hotkey will NOT work without Input Monitoring. Either grant it above (then quit + relaunch FunButton — macOS only re-checks on next launch), or switch the hotkey to <strong>Right Option</strong> below (only needs Accessibility).
+                <div className="fb-hint" style={{color: "#ff9966", marginTop: 6, display: "flex", gap: 6, alignItems: "flex-start"}}>
+                  <AlertTriangle size={13} style={{flexShrink: 0, marginTop: 2}} aria-hidden />
+                  <span>The Fn hotkey will NOT work without Input Monitoring. Grant it above — FunButton picks it up within a few seconds, no relaunch needed — or switch the hotkey to <strong>Right Option</strong> below (only needs Accessibility).</span>
                 </div>
               )}
             </div>

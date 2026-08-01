@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
+import { Cpu, Lock, Zap } from "lucide-react";
 import "./onboarding.css";
 
 type HotkeyKind = "fn" | "right_option";
 type Backend = "auto" | "groq" | "local";
+type EmbeddedStatus = "starting" | "ready" | "failed";
 
 interface Settings {
   groq_api_key: string;
@@ -33,6 +35,7 @@ function App() {
   const [groqState, setGroqState] = useState<"idle" | "checking" | "ok" | "bad">("idle");
   const [groqError, setGroqError] = useState<string>("");
   const [ollamaUp, setOllamaUp] = useState<boolean | null>(null);
+  const [embedded, setEmbedded] = useState<EmbeddedStatus>("starting");
 
   const [hotkeyKind, setHotkeyKind] = useState<HotkeyKind>("fn");
 
@@ -88,10 +91,23 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [micPerm, accPerm, imPerm, step]);
 
-  // Ollama probe on entering step 6
+  // Backend probes on step 6 — poll every 1.5s so the bundled model's
+  // "warming up → ready" transition (and a just-started `ollama serve`)
+  // shows up live, same pattern as the permission steps.
   useEffect(() => {
     if (step !== 6) return;
-    invoke<boolean>("ollama_check").then(setOllamaUp).catch(() => setOllamaUp(false));
+    let cancelled = false;
+    const tick = () => {
+      invoke<boolean>("ollama_check")
+        .then((v) => { if (!cancelled) setOllamaUp(v); })
+        .catch(() => { if (!cancelled) setOllamaUp(false); });
+      invoke<EmbeddedStatus>("embedded_check")
+        .then((v) => { if (!cancelled) setEmbedded(v); })
+        .catch(() => { if (!cancelled) setEmbedded("failed"); });
+    };
+    tick();
+    const id = setInterval(tick, 1500);
+    return () => { cancelled = true; clearInterval(id); };
   }, [step]);
 
   // Keyboard navigation
@@ -115,7 +131,7 @@ function App() {
 
   function canAdvance() {
     if (step === 2) return micPerm === "granted" && accPerm === "granted" && imPerm === "granted";
-    if (step === 6) return groqState === "ok" || ollamaUp === true;
+    if (step === 6) return embedded === "ready" || groqState === "ok" || ollamaUp === true;
     if (step === 7) return true;
     return true;
   }
@@ -237,6 +253,7 @@ function App() {
             groqError={groqError}
             onValidate={validateAndSaveGroq}
             ollamaUp={ollamaUp}
+            embedded={embedded}
             onNext={() => goto(7)}
           />
         )}
@@ -379,25 +396,38 @@ function PermSlide({
 }
 
 function Step6({
-  groqKey, setGroqKey, groqState, groqError, onValidate, ollamaUp, onNext,
+  groqKey, setGroqKey, groqState, groqError, onValidate, ollamaUp, embedded, onNext,
 }: {
   groqKey: string; setGroqKey: (v: string) => void;
   groqState: "idle" | "checking" | "ok" | "bad"; groqError: string;
   onValidate: () => void; ollamaUp: boolean | null;
+  embedded: EmbeddedStatus;
   onNext: () => void;
 }) {
-  const ready = groqState === "ok" || ollamaUp === true;
+  const ready = embedded === "ready" || groqState === "ok" || ollamaUp === true;
   return (
     <section className="ob-slide">
-      <h1 className="ob-h1 small">How should we clean your speech?</h1>
-      <p className="ob-sub small">Pick one. (Both is fine.)</p>
+      <h1 className="ob-h1 small">Cleanup is already on board.</h1>
+      <p className="ob-sub small">
+        A local model ships inside the app — no account, no key, works offline.
+      </p>
+      <div className={`ob-embedded ${embedded}`}>
+        <span className="ob-embedded-icon"><Cpu size={14} /></span>
+        {embedded === "ready" && <span>Bundled model ready (Qwen 2.5, on-device) — cleanup needs zero setup.</span>}
+        {embedded === "starting" && <span>Bundled model warming up… usually a few seconds on first launch.</span>}
+        {embedded === "failed" && <span>Bundled model couldn&apos;t start on this Mac — use one of the options below.</span>}
+      </div>
+      <p className="ob-sub small">
+        Speech-to-text still uses Groq Whisper today (a free key), and the key also unlocks much
+        stronger cleanup. Optional now — you can add it later in Settings.
+      </p>
       <div className="ob-tiles">
         <div className={`ob-tile ${groqState === "ok" ? "good" : ""}`}>
-          <div className="ob-tile-tag">⚡ FAST</div>
+          <div className="ob-tile-tag"><Zap size={11} /> FAST</div>
           <div className="ob-tile-title">Bring your Groq key</div>
           <div className="ob-tile-body">
             <p>
-              ~300 ms cleanup. We never see the key — it lives in <code>~/.funbutton/settings.json</code>.
+              Powers speech-to-text + ~300 ms cleanup. We never see the key — it stays on this Mac.
               {" "}<a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">Grab one free →</a>
             </p>
             <input
@@ -416,7 +446,7 @@ function Step6({
           </div>
         </div>
         <div className={`ob-tile ${ollamaUp === true ? "good" : ""}`}>
-          <div className="ob-tile-tag">🔒 PRIVATE</div>
+          <div className="ob-tile-tag"><Lock size={11} /> PRIVATE</div>
           <div className="ob-tile-title">Use Ollama (local)</div>
           <div className="ob-tile-body">
             {ollamaUp === true ? (
@@ -436,7 +466,7 @@ function Step6({
       </div>
       <div className="ob-cta-row">
         <button className="ob-btn primary" onClick={onNext} disabled={!ready}>
-          {ready ? "Try it now →" : "Configure one above to continue"}
+          {ready ? "Try it now →" : "Waiting for a cleanup path…"}
         </button>
         <button className="ob-link" onClick={onNext}>I&apos;ll set this up later →</button>
       </div>

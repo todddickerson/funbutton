@@ -119,6 +119,19 @@ async fn ollama_check(state: tauri::State<'_, AppStateHandle>) -> Result<bool, S
     Ok(ollama::is_available(&url).await)
 }
 
+/// Status of the bundled llama.cpp cleanup backend.
+/// "ready" | "starting" | "failed" — polled by onboarding step 6.
+#[tauri::command]
+fn embedded_check(state: tauri::State<'_, AppStateHandle>) -> String {
+    if state.embedded.lock().is_some() {
+        "ready".into()
+    } else if state.embedded_error.lock().is_some() {
+        "failed".into()
+    } else {
+        "starting".into()
+    }
+}
+
 #[tauri::command]
 fn history_list(
     state: tauri::State<'_, AppStateHandle>,
@@ -472,6 +485,7 @@ pub fn run() {
             get_hotkey_label,
             simulate_hotkey,
             ollama_check,
+            embedded_check,
             open_settings,
             open_onboarding,
             close_onboarding,
@@ -546,6 +560,7 @@ pub fn run() {
                         }
                         Err(e) => {
                             log::warn!("embedded llama-server failed to start: {e:#}");
+                            *state_for_llm.embedded_error.lock() = Some(e.to_string());
                             let _ = app_for_llm.emit(
                                 "funbutton:embedded-failed",
                                 e.to_string(),

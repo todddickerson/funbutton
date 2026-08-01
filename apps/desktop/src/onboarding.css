@@ -262,6 +262,34 @@ body {
   font-size: 14px;
 }
 
+/* Step 6 — bundled-model status strip */
+.ob-embedded {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 600px;
+  margin: 10px 0 2px;
+  padding: 10px 12px;
+  border: 1px solid #2a2a2a;
+  border-radius: 10px;
+  background: #161616;
+  font-size: 12.5px;
+  color: #bbb;
+  text-align: left;
+  transition: border-color 0.25s, color 0.25s;
+}
+.ob-embedded-icon { display: inline-flex; color: #888; }
+.ob-embedded.ready { border-color: rgba(46,150,46,0.55); color: #6ddd6d; }
+.ob-embedded.ready .ob-embedded-icon { color: #6ddd6d; }
+.ob-embedded.starting .ob-embedded-icon { animation: ob-pulse 1.4s ease-in-out infinite; }
+.ob-embedded.failed { border-color: rgba(255,153,102,0.4); color: #ff9966; }
+.ob-embedded.failed .ob-embedded-icon { color: #ff9966; }
+@keyframes ob-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
 /* Step 6 — tiles */
 .ob-tiles {
   display: grid;
@@ -281,7 +309,9 @@ body {
 }
 .ob-tile.good { border-color: rgba(46,150,46,0.55); }
 .ob-tile-tag {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 9px;
   letter-spacing: 0.15em;
   text-transform: uppercase;

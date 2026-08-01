@@ -2,6 +2,22 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-08-01 16:35 — Permissions UX: live-heal Fn tap + onboarding step 6 rework
+
+**Done:**
+- **`fn_hotkey.rs` now retries CGEventTap creation every 3s.** Root fix for the #1 install-stall: TCC checks happen at `CGEventTapCreate` time, so on a fresh install (Input Monitoring not yet granted) the tap failed once and the listener thread died forever — granting the permission mid-onboarding did nothing until an app relaunch. Now the listener keeps retrying, so the Fn key arms itself within seconds of the grant. Failure logged once (not every 3s); the tap also reinstalls if its runloop ever exits. This is the same "live-polling makes install just work" behavior as freeflow's SetupView, applied at the Rust layer where our actual failure was.
+- **Onboarding step 6 rewritten around the bundled model.** New `embedded_check` Tauri command returns `starting | ready | failed` (backed by a new `embedded_error` field in AppState). Step 6 polls it (plus `ollama_check`) every 1.5s — the "Bundled model warming up… → ready" transition shows live, and the advance gate now counts the embedded backend, so a zero-key user is no longer forced to paste a Groq key or install Ollama to finish onboarding. Honest copy added: speech-to-text still uses Groq Whisper today (free key), bundled Whisper is the next step.
+- **Settings amber warning updated** — the old copy told users to quit + relaunch after granting Input Monitoring; now correctly says the listener picks it up within seconds.
+- **Lucide icons replace emoji in system UI** (`lucide-react` added): step-6 tile tags (Zap/Lock), bundled-model strip (Cpu), Settings warning (AlertTriangle).
+
+**Verified:** `cargo check` clean, `tsc --noEmit` clean.
+
+**Next:** Groq key → macOS Keychain (with migration off settings.json), then v0.1.2 build + DMG + GitHub release.
+
+**Blocked:** none.
+
+---
+
 ## 2026-05-15 12:40 — v0.1.1: HOTKEY BUG FIXED
 
 **Done — root cause was the installed v0.1.0 `.app` missing `NSInputMonitoringUsageDescription`.** Without that Info.plist key macOS silently denies Input Monitoring at the kernel level, `CGEventTapCreate` returns NULL, the Fn-key tap fails to install, the listener thread runs forever receiving zero events. No log surfaces — Settings just sits at "IDLE" and nothing happens when you press Fn. To make matters worse, the UI rendered a hardcoded "Right Option (hold) · Cmd+Shift+V re-paste" string from the persisted `settings.json` even though the actual armed listener was Fn — so anyone trying to debug pressed the wrong key.

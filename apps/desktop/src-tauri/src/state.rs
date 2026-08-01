@@ -193,6 +193,9 @@ pub struct AppState {
     /// `Some` once the bundled llama-server has finished starting up. `None`
     /// during startup or if the user's machine couldn't launch it.
     pub embedded: Mutex<Option<EmbeddedServerHandle>>,
+    /// Set when the bundled llama-server failed to start, so the UI can
+    /// distinguish "still warming up" from "not going to happen".
+    pub embedded_error: Mutex<Option<String>>,
     /// Which hotkey is "armed" right now — both listeners run, but only the
     /// one whose kind matches this atomic emits Down/Up events. Lets us
     /// hot-swap the active hotkey without restarting the app.
@@ -216,6 +219,7 @@ impl AppState {
             last_cleaned: Mutex::new(String::new()),
             history,
             embedded: Mutex::new(None),
+            embedded_error: Mutex::new(None),
             armed_hotkey: armed,
             hotkey_tx: Mutex::new(None),
         })
