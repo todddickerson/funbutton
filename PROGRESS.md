@@ -2,6 +2,35 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-08-02 11:11 — v0.1.4: macOS 26 crash fix (SIGTRAP on keypress during setup)
+
+**Tester on M4 / macOS 26.6 couldn't get through onboarding — app SIGTRAP'd ~15s in, the moment a key event arrived. Root cause + fix shipped.**
+
+**Root cause:** macOS 26 now hard-enforces `dispatch_assert_queue(main)` inside HIToolbox's Text Services input-source APIs (`TSMGetInputSourceProperty` → `islGetInputSourceListWithAdditions`). Any off-main-thread call traps (`EXC_BREAKPOINT`/`SIGTRAP`). macOS 15 silently allowed it, which is why it never reproduced on the Mac Studio. Two paths hit it:
+1. **`rdev`** mapped keycodes→chars via TIS/TSM *inside* the CGEventTap callback on our spawned Right Option listener thread → crash on the first key event (the onboarding crash).
+2. **`enigo`'s `Key::Unicode('v')`** reverse-maps the char via `TISGetInputSourceProperty`/`UCKeyTranslate`, and paste runs on a worker thread → would have trapped on the *first dictation* even after fixing rdev.
+
+**Done:**
+- **Right Option listener rewritten** (`hotkey.rs`): `rdev` removed entirely (dep + its legacy transitive tree), replaced with a raw `CGEventTap` on `FlagsChanged` — same HID-tap pattern as the Fn key. Right Option = virtual keycode `0x3D` + `CGEventFlagAlternate`; Left Option (`0x3A`) ignored. State machine: DOWN doesn't re-fire when other modifiers change, UP fires even while other modifiers are held. **No layout/input-source APIs on the listener thread.**
+- **Paste injection fixed** (`inject.rs`): `Key::Unicode('v')` → `Key::Other(0x09)` (raw V keycode, no layout API). `Key::Meta` already used a fixed keycode.
+- **Crash isolation** (`hotkey.rs` + `fn_hotkey.rs`): each listener thread body wrapped in `catch_unwind` — a future listener panic logs loudly and dies alone instead of killing the app.
+- Audited: `tauri-plugin-global-shortcut` is Carbon `RegisterEventHotKey` (no per-event TSM mapping, main-thread) — safe, not a crash path.
+- v0.1.4 built (.app + DMG via `hdiutil`, the Sequoia bundler workaround), released, landing page bumped.
+
+**Verified (this Mac, macOS 15.6.1 / M3 Ultra):**
+- `cargo check` + `cargo build --release` clean.
+- `grep -r rdev src/` and `grep -riE "TSMGetInputSource|TISCopy|UCKeyTranslate" src/` → nothing on the hotkey path.
+- Launched the built binary with `armed=RightOption`, `RUST_LOG=info`: new raw Right Option tap installs ("Input Monitoring granted; running CFRunLoop"), whisper (MTL0) + llama-server load, **app ran 90s+ with zero panics/traps.**
+- Release: https://github.com/todddickerson/funbutton/releases/tag/v0.1.4
+
+**Next:**
+- **Todd: 10-second physical confirmation** — hold Right Option in any app, confirm dictation fires. I could not automate the literal "hold key → DOWN/UP log" line: FunButton's tap is at `kCGHIDEventTap` (the HID layer, deliberately, matching the Fn tap), and HID taps by design only observe *real hardware* — synthetic `CGEventPost` events don't reach them. The state machine is verified by code review + exact parity with the shipping Fn tap; only a real keypress can exercise the final edge.
+- Ideal: the M4 / macOS 26.6 tester re-runs onboarding on v0.1.4 to confirm the SIGTRAP is gone end-to-end (build a QWERTY-layout note: raw V keycode `0x09` is the V position on QWERTY; non-QWERTY layouts fall back to clipboard + manual ⌘V).
+
+**Blocked:** none.
+
+---
+
 ## 2026-08-01 18:10 — Dev-first behavior forward
 
 **Per the research, "dev-first / code-aware out of the box" is the open cell nobody owns. Made the desktop behavior match the claim:**
