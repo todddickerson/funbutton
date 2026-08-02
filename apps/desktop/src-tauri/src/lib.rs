@@ -492,7 +492,24 @@ pub fn run() {
         app_state.settings.lock().hotkey_kind
     );
     fn_hotkey::spawn_listener(tx.clone(), armed_fn);
-    hotkey::spawn_listener(tx, armed_ro);
+    hotkey::spawn_listener(tx.clone(), armed_ro);
+
+    // Headless verification hook: FUNBUTTON_SELFTEST=1 fires one synthetic
+    // Down→Up cycle after the bundled models have had time to load, so the
+    // full pipeline can be exercised from a terminal launch (combine with
+    // FUNBUTTON_SELFTEST_WAV to feed known speech). No-op in normal runs.
+    if std::env::var("FUNBUTTON_SELFTEST").as_deref() == Ok("1") {
+        let tx_st = tx.clone();
+        std::thread::spawn(move || {
+            log::info!("selftest: armed — firing synthetic hotkey in 15s");
+            std::thread::sleep(std::time::Duration::from_secs(15));
+            let _ = tx_st.send(HotkeyEvent::Down);
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let _ = tx_st.send(HotkeyEvent::Up);
+            log::info!("selftest: synthetic Down/Up sent");
+        });
+    }
+    drop(tx);
     // Silence "unused" warning on the imported enum when we don't directly match.
     let _ = HotkeyKind::Fn;
 
@@ -790,6 +807,22 @@ fn handle_hotkey_loop(
                     (bytes, dur)
                 };
 
+                // Selftest hook: substitute the recorded audio with a known
+                // WAV so transcription quality is assertable headlessly.
+                let wav = match std::env::var("FUNBUTTON_SELFTEST_WAV") {
+                    Ok(p) if !p.is_empty() => match std::fs::read(&p) {
+                        Ok(b) => {
+                            log::info!("selftest: substituting recorded audio with {p}");
+                            b
+                        }
+                        Err(e) => {
+                            log::warn!("selftest: failed to read {p}: {e}");
+                            wav
+                        }
+                    },
+                    _ => wav,
+                };
+
                 let app_h = app.clone();
                 let state_h = Arc::clone(&state);
                 let tray_h = tray.clone();
@@ -856,6 +889,18 @@ fn handle_hotkey_loop(
                             let history_id_paste = history_id;
                             std::thread::spawn(move || {
                                 use inject::PasteOutcome;
+                                // Selftest: don't inject keystrokes into
+                                // whatever window happens to have focus —
+                                // log the result and record success.
+                                if std::env::var("FUNBUTTON_SELFTEST").is_ok()
+                                    || std::env::var("FUNBUTTON_SELFTEST_WAV").is_ok()
+                                {
+                                    log::info!("selftest: paste suppressed; cleaned = {cleaned_for_paste:?}");
+                                    if let Some(id) = history_id_paste {
+                                        let _ = state_inject.history.mark_paste_result(id, true);
+                                    }
+                                    return;
+                                }
                                 let outcome = inject::paste_text(&cleaned_for_paste);
                                 let success = matches!(outcome, PasteOutcome::Pasted);
                                 if let Some(id) = history_id_paste {
