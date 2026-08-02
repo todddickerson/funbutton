@@ -1,7 +1,8 @@
 //! Fn-key push-to-talk via CGEventTap.
 //!
-//! macOS does not expose the Fn key as a normal modifier — `rdev` and
-//! `tauri-plugin-global-shortcut` cannot bind it. The standard route used by
+//! macOS does not expose the Fn key as a normal modifier — general keycode
+//! crates and `tauri-plugin-global-shortcut` cannot bind it. The standard
+//! route used by
 //! Hyperkey, Karabiner-Elements, Raycast Hotkey, and others is a CGEventTap
 //! at the HID layer, listening for `flagsChanged` events and inspecting the
 //! `CGEventFlagSecondaryFn` (0x00800000) bit.
@@ -39,6 +40,13 @@ pub fn spawn_listener(tx: std::sync::mpsc::Sender<HotkeyEvent>, armed: Arc<Atomi
     use std::sync::atomic::{AtomicBool, Ordering};
 
     std::thread::spawn(move || {
+      // Defensive isolation: a Rust-level panic (crate is built panic=unwind)
+      // in the tap callback or runloop logs loudly and lets this thread die
+      // instead of killing the whole app. A hard trap (e.g. an off-main-thread
+      // HIToolbox assertion on macOS 26) is NOT a Rust panic and can't be
+      // caught here — this tap deliberately touches no layout APIs, so there is
+      // nothing to trap.
+      let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
         let last = Arc::new(AtomicBool::new(false));
         // Tap creation fails while Input Monitoring is denied (TCC checks
         // happen at CGEventTapCreate time). Retrying means a grant made
@@ -100,6 +108,16 @@ pub fn spawn_listener(tx: std::sync::mpsc::Sender<HotkeyEvent>, armed: Arc<Atomi
             }
             std::thread::sleep(std::time::Duration::from_secs(3));
         }
+      }));
+
+      // The loop above never returns normally, so reaching here means a panic
+      // unwound out of it.
+      if outcome.is_err() {
+          log::error!(
+              "Fn listener thread panicked and exited; Fn hotkey unavailable until app restart \
+               (other listeners and the rest of the app keep running)."
+          );
+      }
     });
 }
 

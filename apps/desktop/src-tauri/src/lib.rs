@@ -480,9 +480,9 @@ pub fn run() {
     // Hotkey channel — spawn BOTH listeners; each filters on the shared
     // `armed_hotkey` atomic so only the active one emits. This means
     // changing the hotkey kind in Settings hot-swaps instantly without an
-    // app restart, and gives us graceful fallback if one listener can't
-    // start (e.g. Input Monitoring denied → Fn listener errors out, but
-    // Right Option still works because rdev only needs Accessibility).
+    // app restart. Both are raw CGEventTaps (HID layer) and both need Input
+    // Monitoring; if it's denied, each retries every 3s so a mid-onboarding
+    // grant arms the hotkey within seconds without a relaunch.
     let (tx, rx) = mpsc::channel::<HotkeyEvent>();
     *app_state.hotkey_tx.lock() = Some(tx.clone());
     let armed_fn = Arc::clone(&app_state.armed_hotkey);

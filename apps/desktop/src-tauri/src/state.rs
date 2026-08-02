@@ -65,7 +65,9 @@ impl Default for ModeOverride {
 ///   brand. Detected via CGEventTap on the `kCGEventFlagMaskSecondaryFn` bit
 ///   because Fn is not exposed as a normal modifier.
 /// - `RightOption` — fallback for users who already mapped Fn (rare). Detected
-///   via rdev `Key::AltGr`.
+///   via a raw CGEventTap on `FlagsChanged` (virtual keycode `0x3D` +
+///   `CGEventFlagAlternate`); no layout/input-source APIs on the listener
+///   thread, so it's safe on macOS 26 (see `hotkey.rs`).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum HotkeyKind {

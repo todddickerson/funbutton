@@ -59,13 +59,32 @@ pub fn paste_text(text: &str) -> PasteOutcome {
     PasteOutcome::Pasted
 }
 
+// Virtual keycode for the `V` key (`kVK_ANSI_V`). We inject the paste
+// keystroke by keycode rather than by character: enigo's `Key::Unicode('v')`
+// reverse-maps the char to a keycode via the Text Services input-source APIs
+// (`TISGetInputSourceProperty` / `UCKeyTranslate`), and on macOS 26 those
+// assert `dispatch_assert_queue(main)` and trap when called off the main
+// thread — which is exactly where paste runs (a spawned pipeline thread). A
+// raw keycode uses no layout API, so it is safe on every macOS version.
+// `Key::Meta`/`Key::Control` also map to fixed keycodes, so the modifier is
+// safe as-is. (Tradeoff: keycode 0x09 is the V position on QWERTY; on a few
+// remapped layouts Cmd+V may not resolve, in which case the cleaned text is
+// left on the clipboard for manual ⌘V — see `paste_text`.)
+#[cfg(target_os = "macos")]
+const KEYCODE_V: u32 = 0x09;
+
 fn try_send_paste(enigo: &mut Enigo, modifier: Key) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    let v_key = Key::Other(KEYCODE_V);
+    #[cfg(not(target_os = "macos"))]
+    let v_key = Key::Unicode('v');
+
     enigo
         .key(modifier, Direction::Press)
         .map_err(|e| anyhow!("press: {e}"))?;
     thread::sleep(Duration::from_millis(20));
     enigo
-        .key(Key::Unicode('v'), Direction::Click)
+        .key(v_key, Direction::Click)
         .map_err(|e| anyhow!("click: {e}"))?;
     thread::sleep(Duration::from_millis(20));
     enigo
