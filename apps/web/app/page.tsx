@@ -42,12 +42,12 @@ export default function ComingSoon() {
         <span>FunButton</span>
       </div>
       <div className="absolute top-6 right-6 font-mono text-xs text-neutral-500">
-        v0.1.0-alpha
+        v0.1.3-alpha
       </div>
 
       <section className="max-w-3xl mx-auto px-6 pt-32 pb-16 sm:pt-40">
         <p className="font-mono text-xs uppercase tracking-[0.2em] text-red-400 mb-6">
-          ▌ coming soon
+          ▌ macOS alpha — live now
         </p>
 
         <h1 className="text-5xl sm:text-7xl font-bold tracking-tight leading-[1.05]">
@@ -66,6 +66,31 @@ export default function ComingSoon() {
 
         <p className="mt-4 font-mono text-xs text-neutral-600 max-w-xl">
           → talk fast · stay local · pay less
+        </p>
+
+        {/* Alpha download */}
+        <div className="mt-10 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+          <a
+            href="https://github.com/todddickerson/funbutton/releases/latest/download/FunButton_0.1.3_aarch64.dmg"
+            className="inline-flex items-center gap-2 px-6 py-3.5 bg-red-500 hover:bg-red-400 active:bg-red-600 text-black font-mono text-sm font-bold rounded-md transition"
+          >
+            ⬇ Download for macOS
+            <span className="text-red-900/70 font-normal">(Apple Silicon)</span>
+          </a>
+          <a
+            href="https://github.com/todddickerson/funbutton/releases/tag/v0.1.3"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-mono text-xs text-neutral-500 hover:text-red-400 transition underline underline-offset-4 decoration-neutral-700"
+          >
+            v0.1.3 release notes →
+          </a>
+        </div>
+        <p className="mt-4 font-mono text-[11px] text-neutral-600 max-w-xl leading-relaxed">
+          No API key. No account. Ever. Transcribes + cleans up entirely on-device
+          (whisper + Qwen, bundled). Unsigned alpha: after install run{" "}
+          <code className="text-neutral-400">sudo xattr -cr /Applications/FunButton.app</code>,
+          then grant Microphone / Accessibility / Input Monitoring.
         </p>
 
         {/* Email capture */}
@@ -188,8 +213,7 @@ function PricingSection() {
             "No cap, no card, no cloud lock-in",
           ]}
           cta="Download alpha"
-          ctaHref="https://github.com/todddickerson/funbutton/releases"
-          ctaTarget="_blank"
+          ctaHref="https://github.com/todddickerson/funbutton/releases/latest/download/FunButton_0.1.3_aarch64.dmg"
         />
         <PriceCard
           tier="pro_annual"
@@ -349,9 +373,7 @@ function SuccessState() {
         </a>
         <span className="text-neutral-700">|</span>
         <a
-          href="https://github.com/todddickerson/funbutton/releases"
-          target="_blank"
-          rel="noopener noreferrer"
+          href="https://github.com/todddickerson/funbutton/releases/latest/download/FunButton_0.1.3_aarch64.dmg"
           className="text-neutral-500 hover:text-red-400 transition underline underline-offset-4 decoration-neutral-800"
         >
           for the brave: download the alpha →
