@@ -15,7 +15,7 @@
 - **Paste injection fixed** (`inject.rs`): `Key::Unicode('v')` → `Key::Other(0x09)` (raw V keycode, no layout API). `Key::Meta` already used a fixed keycode.
 - **Crash isolation** (`hotkey.rs` + `fn_hotkey.rs`): each listener thread body wrapped in `catch_unwind` — a future listener panic logs loudly and dies alone instead of killing the app.
 - Audited: `tauri-plugin-global-shortcut` is Carbon `RegisterEventHotKey` (no per-event TSM mapping, main-thread) — safe, not a crash path.
-- v0.1.4 built (.app + DMG via `hdiutil`, the Sequoia bundler workaround), released, landing page bumped.
+- v0.1.4 built (.app + DMG via `hdiutil`, the Sequoia bundler workaround — tauri's `bundle_dmg.sh` still fails on Sequoia), released, landing page bumped, funbutton.ai deployed (now serving v0.1.4-alpha; `latest/download` DMG link verified 200).
 
 **Verified (this Mac, macOS 15.6.1 / M3 Ultra):**
 - `cargo check` + `cargo build --release` clean.
@@ -26,6 +26,8 @@
 **Next:**
 - **Todd: 10-second physical confirmation** — hold Right Option in any app, confirm dictation fires. I could not automate the literal "hold key → DOWN/UP log" line: FunButton's tap is at `kCGHIDEventTap` (the HID layer, deliberately, matching the Fn tap), and HID taps by design only observe *real hardware* — synthetic `CGEventPost` events don't reach them. The state machine is verified by code review + exact parity with the shipping Fn tap; only a real keypress can exercise the final edge.
 - Ideal: the M4 / macOS 26.6 tester re-runs onboarding on v0.1.4 to confirm the SIGTRAP is gone end-to-end (build a QWERTY-layout note: raw V keycode `0x09` is the V position on QWERTY; non-QWERTY layouts fall back to clipboard + manual ⌘V).
+
+**Heads-up (not blocking):** `scripts/update-landing-version.sh` committed + pushed the page.tsx bump correctly, but its `vercel --prod` step aborted under `set -euo pipefail` (the git changes had already landed). I ran the prod deploy by hand — it built clean and aliased funbutton.ai. Worth hardening that step before the next release (or the periodic cron) so the deploy doesn't silently no-op.
 
 **Blocked:** none.
 
