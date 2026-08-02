@@ -42,7 +42,7 @@ export default function ComingSoon() {
         <span>FunButton</span>
       </div>
       <div className="absolute top-6 right-6 font-mono text-xs text-neutral-500">
-        v0.1.3-alpha
+        v0.1.4-alpha
       </div>
 
       <section className="max-w-3xl mx-auto px-6 pt-32 pb-16 sm:pt-40">
@@ -71,14 +71,14 @@ export default function ComingSoon() {
         {/* Alpha download */}
         <div className="mt-10 flex flex-col sm:flex-row items-start sm:items-center gap-4">
           <a
-            href="https://github.com/todddickerson/funbutton/releases/latest/download/FunButton_0.1.3_aarch64.dmg"
+            href="https://github.com/todddickerson/funbutton/releases/latest/download/FunButton_0.1.4_aarch64.dmg"
             className="inline-flex items-center gap-2 px-6 py-3.5 bg-red-500 hover:bg-red-400 active:bg-red-600 text-black font-mono text-sm font-bold rounded-md transition"
           >
             ⬇ Download for macOS
             <span className="text-red-900/70 font-normal">(Apple Silicon)</span>
           </a>
           <a
-            href="https://github.com/todddickerson/funbutton/releases/tag/v0.1.3"
+            href="https://github.com/todddickerson/funbutton/releases/tag/v0.1.4"
             target="_blank"
             rel="noopener noreferrer"
             className="font-mono text-xs text-neutral-500 hover:text-red-400 transition underline underline-offset-4 decoration-neutral-700"
@@ -213,7 +213,7 @@ function PricingSection() {
             "No cap, no card, no cloud lock-in",
           ]}
           cta="Download alpha"
-          ctaHref="https://github.com/todddickerson/funbutton/releases/latest/download/FunButton_0.1.3_aarch64.dmg"
+          ctaHref="https://github.com/todddickerson/funbutton/releases/latest/download/FunButton_0.1.4_aarch64.dmg"
         />
         <PriceCard
           tier="pro_annual"
@@ -373,7 +373,7 @@ function SuccessState() {
         </a>
         <span className="text-neutral-700">|</span>
         <a
-          href="https://github.com/todddickerson/funbutton/releases/latest/download/FunButton_0.1.3_aarch64.dmg"
+          href="https://github.com/todddickerson/funbutton/releases/latest/download/FunButton_0.1.4_aarch64.dmg"
           className="text-neutral-500 hover:text-red-400 transition underline underline-offset-4 decoration-neutral-800"
         >
           for the brave: download the alpha →
