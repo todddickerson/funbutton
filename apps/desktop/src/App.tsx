@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, ChevronRight } from "lucide-react";
 import "./App.css";
 
 type Backend = "auto" | "groq" | "local" | "embedded";
@@ -75,6 +75,33 @@ const RETENTION_OPTIONS: { label: string; days: number }[] = [
   { label: "never", days: 0 },
 ];
 
+// Mirrors src-tauri/src/app_detect.rs + cleanup.rs routing. Presentation only —
+// the actual decision happens in Rust on every dictation.
+const MODE_MAP: { mode: string; apps: string[]; more?: string; what: string }[] = [
+  {
+    mode: "code",
+    apps: ["Cursor", "VS Code", "JetBrains", "Xcode", "Vim", "Zed", "Windsurf"],
+    more: "+ AI IDEs, git clients, Sublime, Emacs",
+    what: "identifiers stay identifiers. no prose padding.",
+  },
+  {
+    mode: "term",
+    apps: ["Terminal", "iTerm2", "Warp", "Ghostty", "kitty"],
+    more: "+ Alacritty, WezTerm, Tabby, Hyper",
+    what: "literal commands, exactly as spoken.",
+  },
+  {
+    mode: "email",
+    apps: ["Mail"],
+    what: "greeting, clean paragraphs, sign-off.",
+  },
+  {
+    mode: "slack",
+    apps: ["Slack", "Discord", "Messages"],
+    what: "casual and short. no corporate polish.",
+  },
+];
+
 function App() {
   const [tab, setTab] = useState<Tab>("settings");
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -82,8 +109,7 @@ function App() {
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [last, setLast] = useState<ResultPayload | null>(null);
   const [ollamaUp, setOllamaUp] = useState<boolean | null>(null);
-  // null = unknown / still spawning, true = /health 200, false = spawn failed
-  const [embeddedReady, setEmbeddedReady] = useState<boolean | null>(false);
+  const [cleanupStatus, setCleanupStatus] = useState<EngineStatus>("starting");
   const [sttStatus, setSttStatus] = useState<EngineStatus>("starting");
   const [saved, setSaved] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -99,8 +125,20 @@ function App() {
   const [capDraftCents, setCapDraftCents] = useState<number>(2000);
   const [showCapDisclosure, setShowCapDisclosure] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  // Permissions snapshot (refreshed on mount, on tab focus, and after a Grant click).
+  // Permissions snapshot (refreshed on mount, on window focus, and after Grant).
   const [perms, setPerms] = useState<{ microphone: boolean; accessibility: boolean; input_monitoring: boolean } | null>(null);
+  // Welcome card is first-run only: dismissed once, stays gone (window-local flag,
+  // independent of the onboarding wizard's settings.onboarded).
+  const [welcomeDismissed, setWelcomeDismissed] = useState<boolean>(
+    () => localStorage.getItem("fb_welcome_dismissed") === "1"
+  );
+  // All-granted permissions collapse to one row; click re-expands.
+  const [permsOpen, setPermsOpen] = useState(false);
+
+  function dismissWelcome() {
+    localStorage.setItem("fb_welcome_dismissed", "1");
+    setWelcomeDismissed(true);
+  }
 
   async function refreshPerms() {
     try {
@@ -140,19 +178,23 @@ function App() {
     }
   }
 
-  useEffect(() => {
-    invoke<Settings>("get_settings").then(setSettings);
-    invoke<string>("get_status").then(setStatus);
+  function recheckEngines() {
+    setOllamaUp(null);
     invoke<boolean>("ollama_check").then(setOllamaUp).catch(() => setOllamaUp(false));
-    // Snapshot both embedded engines — the ready/failed events may have
-    // fired before this window mounted.
+    // Snapshot both embedded engines — ready/failed events may have fired
+    // before this window mounted.
     invoke<{ cleanup: EngineStatus; stt: EngineStatus }>("embedded_check")
       .then((s) => {
         setSttStatus(s.stt);
-        if (s.cleanup === "ready") setEmbeddedReady(true);
-        else if (s.cleanup === "failed") setEmbeddedReady(false);
+        setCleanupStatus(s.cleanup);
       })
       .catch(() => {});
+  }
+
+  useEffect(() => {
+    invoke<Settings>("get_settings").then(setSettings);
+    invoke<string>("get_status").then(setStatus);
+    recheckEngines();
     refreshPerms();
     refreshHistory();
 
@@ -184,11 +226,11 @@ function App() {
       refreshHistory();
     });
     const unEmbReady = listen("funbutton:embedded-ready", () => {
-      setEmbeddedReady(true);
+      setCleanupStatus("ready");
       pushToast("ok", "Bundled local model ready — no API key needed.");
     });
     const unEmbFail = listen<string>("funbutton:embedded-failed", (e) => {
-      setEmbeddedReady(false);
+      setCleanupStatus("failed");
       console.warn("embedded LLM failed:", e.payload);
     });
     const unSttReady = listen("funbutton:stt-ready", () => setSttStatus("ready"));
@@ -238,12 +280,28 @@ function App() {
     setSettings({ ...settings, [k]: v });
   }
 
-  async function save() {
-    if (!settings) return;
-    await invoke("save_settings", { settings });
-    await invoke("history_purge_now").catch(() => {});
+  function flashSaved() {
     setSaved(true);
     setTimeout(() => setSaved(false), 1400);
+  }
+
+  async function persist(next: Settings, purge = false) {
+    setSettings(next);
+    await invoke("save_settings", { settings: next });
+    if (purge) await invoke("history_purge_now").catch(() => {});
+    flashSaved();
+  }
+
+  // Pills and chips save instantly — no separate save step for discrete choices.
+  function setAndSave<K extends keyof Settings>(k: K, v: Settings[K], purge = false) {
+    if (!settings) return;
+    void persist({ ...settings, [k]: v }, purge);
+  }
+
+  // Text fields save on blur.
+  async function saveDrafts() {
+    if (!settings) return;
+    await persist(settings);
   }
 
   // -------- License --------
@@ -335,14 +393,42 @@ function App() {
     }
   }
 
-  const dot = status === "recording" ? "#ff5050" :
-              status === "transcribing" || status === "cleaning" || status === "pasting" ? "#ffaa00" :
-              status === "error" ? "#ff5050" : "#9a9a9a";
+  const dot = status === "recording" ? "var(--bad)" :
+              status === "transcribing" || status === "cleaning" || status === "pasting" ? "var(--warn)" :
+              status === "error" ? "var(--bad)" : "var(--dim)";
 
   const modesInHistory = useMemo(() => {
     const set = new Set(history.map(h => h.mode_used));
     return Array.from(set).sort();
   }, [history]);
+
+  const historyGroups = useMemo(() => {
+    const out: { label: string; items: HistoryEntry[] }[] = [];
+    for (const h of history) {
+      const label = dayLabel(h.ts);
+      if (!out.length || out[out.length - 1].label !== label) {
+        out.push({ label, items: [] });
+      }
+      out[out.length - 1].items.push(h);
+    }
+    return out;
+  }, [history]);
+
+  const lastRouted = history.length > 0 ? history[0] : null;
+
+  const hasGroqKey = (settings?.groq_api_key.trim() ?? "") !== "";
+
+  // Mirrors pipeline.rs auto order: embedded → ollama → groq.
+  function autoRouteLabel(): string {
+    if (!settings) return "";
+    if (settings.backend === "embedded") return "pinned → qwen 2.5 (bundled)";
+    if (settings.backend === "local") return "pinned → ollama";
+    if (settings.backend === "groq") return "pinned → groq cloud";
+    if (cleanupStatus === "ready") return "auto → qwen 2.5 (bundled)";
+    if (ollamaUp) return "auto → ollama";
+    if (hasGroqKey) return "auto → groq cloud";
+    return cleanupStatus === "failed" ? "auto → no engine up" : "auto → qwen (warming up)";
+  }
 
   return (
     <main className="fb-root">
@@ -353,8 +439,17 @@ function App() {
           <span className="fb-tag">talk fast. stay local. pay less.</span>
         </div>
         <div className="fb-status">
+          {settings && settings.words_today > 0 && (
+            <>
+              <span className="fb-header-words" title="words dictated today">
+                <b>{settings.words_today.toLocaleString()}</b> words today
+              </span>
+              <span className="fb-header-sep" aria-hidden />
+            </>
+          )}
           <span className="fb-dot" style={{ background: dot }} />
           <span className="fb-status-label">{status}{statusMsg ? ` — ${statusMsg}` : ""}</span>
+          {saved && <span className="fb-savetick">saved ✓</span>}
         </div>
       </header>
 
@@ -373,24 +468,78 @@ function App() {
       {!settings ? (
         <div className="fb-loading">loading…</div>
       ) : tab === "settings" ? (
+        <div className="fb-scroll">
         <div className="fb-form">
-          {settings.groq_api_key.trim() === "" && (
+          {!welcomeDismissed && (
             <div className="fb-welcome">
-              <div className="fb-welcome-title">welcome — meet the Fun Button.</div>
+              <button
+                className="fb-welcome-x"
+                aria-label="dismiss intro"
+                title="dismiss — replay any time via Replay onboarding below"
+                onClick={dismissWelcome}
+              >×</button>
+              <div className="fb-welcome-title">meet the Fun Button.</div>
               <div className="fb-welcome-body">
-                <strong>FunButton = Fn Button.</strong> The key at the bottom-left corner of your Mac keyboard.
-                You probably never used it. We just gave it a job.<br/><br/>
-                <strong>Zero setup.</strong> Speech-to-text and cleanup both run on models bundled inside the app —
-                no account, no API key, works offline.<br/>
-                <strong>Step 1.</strong> Hold <kbd>fn</kbd> in any text field, talk, release.<br/>
-                <strong>Step 2.</strong> macOS will ask for <strong>Microphone</strong>, <strong>Accessibility</strong>, and <strong>Input Monitoring</strong>. Grant all three — the Input Monitoring one is what lets us see Fn.<br/><br/>
-                Want faster, stronger cloud processing? Paste a free Groq key below — strictly optional.
+                <strong>FunButton = Fn Button.</strong> Bottom-left key on your Mac.
+                Nobody used it. We gave it a job.<br/>
+                <strong>Zero setup.</strong> Speech-to-text and cleanup run on models
+                bundled inside the app. No account. No key. Works on a plane.<br/>
+                Hold <kbd>fn</kbd> in any text field, talk, release. Grant the three
+                permissions below and you're dictating.
               </div>
             </div>
           )}
-          {perms && (
-            <div className="fb-section">
-              <label className="fb-label">Permissions</label>
+
+          <div className="fb-section">
+            <div className="fb-label-row">
+              <label className="fb-label">The Button</label>
+              <span className="fb-label-aux">armed: {settings.hotkey_kind === "fn" ? "fn" : "right ⌥"}</span>
+            </div>
+            <div className="fb-keyboard-glyph">
+              <div className={`fb-key ${settings.hotkey_kind === "fn" ? "on" : ""}`} title="The Fn key — bottom-left of every Mac keyboard">
+                <span className="fb-key-label">{settings.hotkey_kind === "fn" ? "fn" : "⌥"}</span>
+                <span className="fb-key-fun">{settings.hotkey_kind === "fn" ? "FUN" : "R-OPT"}</span>
+              </div>
+              <div className="fb-keyboard-caption">
+                {settings.hotkey_kind === "fn" ? (
+                  <>hold it anywhere, talk, release.<br/>
+                  <span className="fb-muted">bottom-left of your keyboard. the one you never used.</span></>
+                ) : (
+                  <>hold Right Option anywhere, talk, release.<br/>
+                  <span className="fb-muted">only needs Accessibility. good if Fn is taken by Karabiner.</span></>
+                )}
+              </div>
+            </div>
+            <div className="fb-radios">
+              {(["fn","right_option"] as const).map(k => (
+                <button
+                  key={k}
+                  className={`fb-pill ${settings.hotkey_kind === k ? "on" : ""}`}
+                  onClick={async () => {
+                    // Hot-swap: persist immediately so the Rust side flips
+                    // the armed-hotkey atomic on save_settings. No app
+                    // restart needed.
+                    setAndSave("hotkey_kind", k);
+                    pushToast("ok", `Hotkey armed: ${k === "fn" ? "Fn" : "Right Option"}`);
+                  }}
+                >{k === "fn" ? "Fn (default)" : "Right Option"}</button>
+              ))}
+            </div>
+
+            {perms && perms.microphone && perms.accessibility && perms.input_monitoring && (
+              <button
+                className={`fb-perms-compact ${permsOpen ? "open" : ""}`}
+                aria-expanded={permsOpen}
+                onClick={() => setPermsOpen(o => !o)}
+              >
+                <span className="fb-perms-compact-dot" aria-hidden>●</span>
+                <span className="fb-perms-compact-name">permissions</span>
+                <span className="fb-perms-compact-hint">mic · accessibility · input monitoring</span>
+                <span className="fb-perms-compact-state">3/3 granted</span>
+                <ChevronRight size={12} className="fb-perms-chev" aria-hidden />
+              </button>
+            )}
+            {perms && (permsOpen || !(perms.microphone && perms.accessibility && perms.input_monitoring)) && (
               <div className="fb-perms">
                 <PermRow
                   name="Microphone"
@@ -404,7 +553,7 @@ function App() {
                 <PermRow
                   name="Accessibility"
                   granted={perms.accessibility}
-                  why="paste cleaned text via ⌘V + watch Right Option"
+                  why="paste via ⌘V + watch Right Option"
                   onGrant={async () => {
                     await invoke("plugin:macos-permissions|request_accessibility_permission").catch(() => {});
                     setTimeout(refreshPerms, 600);
@@ -413,7 +562,7 @@ function App() {
                 <PermRow
                   name="Input Monitoring"
                   granted={perms.input_monitoring}
-                  why={settings.hotkey_kind === "fn" ? "REQUIRED — detect Fn key" : "only required for the Fn hotkey"}
+                  why={settings.hotkey_kind === "fn" ? "required to see the Fn key" : "only needed for the Fn hotkey"}
                   required={settings.hotkey_kind === "fn"}
                   onGrant={async () => {
                     await invoke("plugin:macos-permissions|request_input_monitoring_permission").catch(() => {});
@@ -421,214 +570,227 @@ function App() {
                   }}
                 />
               </div>
-              {settings.hotkey_kind === "fn" && !perms.input_monitoring && (
-                <div className="fb-hint" style={{color: "#ff9966", marginTop: 6, display: "flex", gap: 6, alignItems: "flex-start"}}>
-                  <AlertTriangle size={13} style={{flexShrink: 0, marginTop: 2}} aria-hidden />
-                  <span>The Fn hotkey will NOT work without Input Monitoring. Grant it above — FunButton picks it up within a few seconds, no relaunch needed — or switch the hotkey to <strong>Right Option</strong> below (only needs Accessibility).</span>
-                </div>
-              )}
-            </div>
-          )}
+            )}
+            {settings.hotkey_kind === "fn" && perms && !perms.input_monitoring && (
+              <div className="fb-callout">
+                <AlertTriangle size={13} aria-hidden />
+                <span>Fn will NOT fire without Input Monitoring. Grant it above — picked up within seconds, no relaunch — or switch to <strong>Right Option</strong> (Accessibility only).</span>
+              </div>
+            )}
 
-          <div className="fb-section">
-            <label className="fb-label">The Fun Button — currently armed: <strong>{settings.hotkey_kind === "fn" ? "Fn" : "Right Option"}</strong></label>
-            <div className="fb-keyboard-glyph">
-              <div className={`fb-key fn ${settings.hotkey_kind === "fn" ? "on" : ""}`} title="The Fn key — bottom-left of every Mac keyboard">
-                <span className="fb-key-label">fn</span>
-                <span className="fb-key-fun">FUN</span>
-              </div>
-              <div className="fb-key-arrow">↑</div>
-              <div className="fb-keyboard-caption">
-                that key, bottom-left of your keyboard.<br/>
-                <span className="fb-muted">nobody used it. we just gave it a job.</span>
-              </div>
-            </div>
-            <div className="fb-radios" style={{marginTop:8}}>
-              {(["fn","right_option"] as const).map(k => (
-                <button
-                  key={k}
-                  className={`fb-pill ${settings.hotkey_kind === k ? "on" : ""}`}
-                  onClick={async () => {
-                    // Hot-swap: persist immediately so the Rust side flips
-                    // the armed-hotkey atomic on save_settings. No app
-                    // restart needed.
-                    const next = { ...settings, hotkey_kind: k };
-                    setSettings(next);
-                    await invoke("save_settings", { settings: next });
-                    pushToast("ok", `Hotkey armed: ${k === "fn" ? "Fn" : "Right Option"}`);
-                  }}
-                >{k === "fn" ? "Fn (default)" : "Right Option"}</button>
-              ))}
-            </div>
-            <div className="fb-hint">
-              Default is the <strong>Fun Button</strong> (Fn — bottom-left). Needs Input Monitoring permission on first run.
-              {" "}Switch to <strong>Right Option</strong> if you've already mapped Fn elsewhere (Karabiner, Hyperkey, etc) — it only needs Accessibility.
-              <br/>
-              <kbd>⌘⇧V</kbd> re-pastes last cleaned · <kbd>⌘⇧H</kbd> opens history · hotkey switches take effect immediately.
-            </div>
-            <div className="fb-actions" style={{marginTop: 10}}>
+            <div className="fb-testrow">
               <button
                 className="fb-btn-small"
                 onClick={async () => {
                   pushToast("info", "Simulating Down→Up (1.5s)…");
                   try {
                     await invoke("simulate_hotkey", { durationMs: 1500 });
-                    pushToast("ok", "Hotkey simulated — pipeline should now record, transcribe, and paste at your cursor");
+                    pushToast("ok", "Hotkey simulated — pipeline should record, transcribe, and paste at your cursor");
                   } catch (e) {
                     pushToast("warn", `Simulate failed: ${e}`);
                   }
                 }}
-              >Test Hotkey (bisect: bypass the listener)</button>
-              <div className="fb-hint" style={{marginTop: 6}}>
-                If this button works but holding {settings.hotkey_kind === "fn" ? "Fn" : "Right Option"} doesn't, the listener is being blocked by macOS — grant the matching permission above.
-              </div>
+              >Test the button</button>
+              <span className="fb-hint">
+                bypasses the key listener. works here but not when holding {settings.hotkey_kind === "fn" ? "Fn" : "Right Option"}? macOS is blocking the listener — grant the permission above.
+              </span>
+            </div>
+            <div className="fb-hint">
+              <kbd>⌘⇧V</kbd> re-pastes last · <kbd>⌘⇧H</kbd> opens history · hotkey switches apply instantly
             </div>
           </div>
 
           <div className="fb-section">
-            <label className="fb-label">Mode</label>
+            <div className="fb-label-row">
+              <label className="fb-label">Engines</label>
+              <span className="fb-label-aux">{autoRouteLabel()}</span>
+              <button className="fb-linkbtn" onClick={recheckEngines}>recheck</button>
+            </div>
+            <div className="fb-engines">
+              <EngineRow
+                state={sttStatus === "ready" ? "ready" : sttStatus === "failed" ? "failed" : "busy"}
+                name="whisper"
+                detail="on-device speech-to-text · bundled"
+                label={sttStatus === "ready" ? "ready" : sttStatus === "failed" ? "failed" : "loading"}
+              />
+              <EngineRow
+                state={cleanupStatus === "ready" ? "ready" : cleanupStatus === "failed" ? "failed" : "busy"}
+                name="qwen 2.5 1.5b"
+                detail="bundled cleanup · zero config"
+                label={cleanupStatus === "ready" ? "ready" : cleanupStatus === "failed" ? "failed" : "warming up"}
+              />
+              <EngineRow
+                state={ollamaUp === true ? "ready" : ollamaUp === null ? "busy" : "off"}
+                name="ollama"
+                detail={`${settings.ollama_model} @ ${settings.ollama_url.replace(/^https?:\/\//, "")}`}
+                label={ollamaUp === true ? "detected" : ollamaUp === null ? "checking" : "not running"}
+              />
+              <EngineRow
+                state={hasGroqKey ? "ready" : "off"}
+                name="groq cloud"
+                detail="whisper turbo + llama 3.3 · BYOK"
+                label={hasGroqKey ? "key set" : "no key"}
+              />
+            </div>
+
+            <div className="fb-selrow">
+              <span className="fb-selname">speech-to-text</span>
+              <div className="fb-radios fb-radios-grow">
+                {(["local", "groq"] as const).map(b => (
+                  <button
+                    key={b}
+                    className={`fb-pill ${settings.stt_backend === b ? "on" : ""}`}
+                    onClick={() => setAndSave("stt_backend", b)}
+                  >{b === "local" ? "on-device" : "groq cloud"}</button>
+                ))}
+              </div>
+            </div>
+            <div className="fb-selrow">
+              <span className="fb-selname">cleanup</span>
+              <div className="fb-radios fb-radios-grow">
+                {(["auto","embedded","groq","local"] as const).map(b => (
+                  <button
+                    key={b}
+                    className={`fb-pill ${settings.backend === b ? "on" : ""}`}
+                    onClick={() => setAndSave("backend", b)}
+                  >{b === "embedded" ? "bundled" : b === "local" ? "ollama" : b}</button>
+                ))}
+              </div>
+            </div>
+            <div className="fb-hint">
+              <strong>auto</strong> tries bundled → ollama → groq and takes the first one alive.
+              whichever you pin, the rest stay as silent fallbacks. audio never leaves this Mac
+              unless you pick groq.
+            </div>
+
+            <div className="fb-fieldrow">
+              <span className="fb-selname">groq key</span>
+              <input
+                className="fb-input"
+                type="password"
+                value={settings.groq_api_key}
+                onChange={(e) => update("groq_api_key", e.target.value)}
+                onBlur={saveDrafts}
+                placeholder="gsk_… (optional — everything works without it)"
+              />
+            </div>
+            <div className="fb-fieldrow">
+              <span className="fb-selname">ollama model</span>
+              <input
+                className="fb-input"
+                value={settings.ollama_model}
+                onChange={(e) => update("ollama_model", e.target.value)}
+                onBlur={saveDrafts}
+              />
+            </div>
+            <div className="fb-hint">
+              free key at <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">console.groq.com/keys</a> —
+              stored in your macOS Keychain, never plaintext on disk.
+              ollama: run <code>ollama pull qwen2.5:1.5b</code> once.
+            </div>
+          </div>
+
+          <div className="fb-section">
+            <div className="fb-label-row">
+              <label className="fb-label">Modes</label>
+              <span className="fb-label-aux">
+                {settings.mode_override === "auto"
+                  ? lastRouted && lastRouted.frontmost_app
+                    ? `last: ${lastRouted.frontmost_app} → ${lastRouted.mode_used}`
+                    : "routed per app, per dictation"
+                  : `override on: everything → ${settings.mode_override}`}
+              </span>
+            </div>
             <div className="fb-radios">
               {(["auto","code","email","slack","raw"] as const).map(m => (
                 <button
                   key={m}
                   className={`fb-pill ${settings.mode_override === m ? "on" : ""}`}
-                  onClick={() => update("mode_override", m)}
+                  onClick={() => setAndSave("mode_override", m)}
                 >{m}</button>
               ))}
             </div>
-            <div className="fb-hint">
-              <strong>auto</strong> picks based on the frontmost app (Cursor / VS Code / Mail / Slack → matching prompt). Override to force a mode.
-            </div>
-          </div>
-
-          <div className="fb-section">
-            <label className="fb-label">Transcription (speech-to-text)</label>
-            <div className="fb-radios">
-              {(["local", "groq"] as const).map(b => (
-                <button
-                  key={b}
-                  className={`fb-pill ${settings.stt_backend === b ? "on" : ""}`}
-                  onClick={() => update("stt_backend", b)}
-                >{b === "local" ? "on-device (default)" : "groq cloud"}</button>
+            <div className={`fb-modemap ${settings.mode_override !== "auto" ? "bypassed" : ""}`}>
+              {MODE_MAP.map(row => (
+                <div className="fb-modemap-row" key={row.mode}>
+                  <span className="fb-mode-tag">{row.mode}</span>
+                  <div className="fb-modemap-apps">
+                    {row.apps.map(a => <span className="fb-appchip" key={a}>{a}</span>)}
+                    {row.more && <span className="fb-appchip more">{row.more}</span>}
+                    <span className="fb-modemap-what">{row.what}</span>
+                  </div>
+                </div>
               ))}
+              <div className="fb-modemap-row">
+                <span className="fb-mode-tag dim">auto</span>
+                <div className="fb-modemap-apps">
+                  <span className="fb-modemap-what">everything else — cleanup reads intent from what you said.</span>
+                </div>
+              </div>
             </div>
-            <div className="fb-hint">
-              <strong>on-device</strong> uses the bundled Whisper model — zero keys, works offline, audio never leaves this Mac.{" "}
-              <strong>groq cloud</strong> is faster and more accurate but needs a key and internet.
-              Whichever you pick, the other stays as a silent fallback.
-              {sttStatus === "ready" && <span className="fb-up"> · on-device model ready ✓</span>}
-              {sttStatus === "starting" && <span className="fb-down"> · on-device model loading…</span>}
-              {sttStatus === "failed" && <span className="fb-down"> · on-device model failed — Groq key required</span>}
-            </div>
+            {settings.mode_override !== "auto" && (
+              <div className="fb-hint">
+                per-app routing is paused while an override is set. flip back to <strong>auto</strong> to re-enable it.
+              </div>
+            )}
           </div>
 
           <div className="fb-section">
-            <label className="fb-label">Cleanup backend</label>
-            <div className="fb-radios">
-              {(["auto","embedded","groq","local"] as const).map(b => (
-                <button
-                  key={b}
-                  className={`fb-pill ${settings.backend === b ? "on" : ""}`}
-                  onClick={() => update("backend", b)}
-                >{b}</button>
-              ))}
+            <div className="fb-label-row">
+              <label className="fb-label">Dictionary</label>
+              <span className="fb-label-aux">{settings.dictionary.length === 0 ? "empty" : `${settings.dictionary.length} term${settings.dictionary.length === 1 ? "" : "s"}`}</span>
             </div>
-            <div className="fb-hint">
-              <strong>auto</strong> tries the bundled local model → Ollama (if running) → Groq.{" "}
-              <strong>embedded</strong> uses the bundled Qwen 2.5 1.5B — no key, offline.{" "}
-              <strong>groq</strong> uses your Groq cloud key.{" "}
-              <strong>local</strong> uses external Ollama at <code>{settings.ollama_url}</code>.
-              {embeddedReady === true && <span className="fb-up"> · embedded ready ✓</span>}
-              {embeddedReady === false && <span className="fb-down"> · embedded loading…</span>}
-              {ollamaUp === true && <span className="fb-up"> · ollama detected ✓</span>}
-            </div>
-          </div>
-
-          <div className="fb-section">
-            <label className="fb-label">Groq API key</label>
-            <input
-              className="fb-input"
-              type="password"
-              value={settings.groq_api_key}
-              onChange={(e) => update("groq_api_key", e.target.value)}
-              placeholder="gsk_…"
+            <DictionaryEditor
+              words={settings.dictionary}
+              onChange={(w) => setAndSave("dictionary", w)}
             />
             <div className="fb-hint">
-              Optional — everything works without it. A key unlocks Groq cloud transcription + Llama 3.3 cleanup (faster, stronger).
-              Get one free at{" "}
-              <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">console.groq.com/keys</a>.
-              {" "}Stored in your macOS Keychain, never written to disk in plaintext.
+              brand names, jargon, project names. cleanup keeps these spellings even when
+              whisper hears them slightly off. enter or comma to add.
             </div>
           </div>
 
           <div className="fb-section">
-            <label className="fb-label">Local model (Ollama)</label>
-            <input
-              className="fb-input"
-              value={settings.ollama_model}
-              onChange={(e) => update("ollama_model", e.target.value)}
-            />
-            <div className="fb-hint">
-              Recommended: <code>qwen2.5:1.5b</code>. Run <code>ollama pull qwen2.5:1.5b</code> once.
+            <div className="fb-label-row">
+              <label className="fb-label">History retention</label>
+              <span className="fb-label-aux">local-only · ~/.funbutton/history.db</span>
             </div>
-          </div>
-
-          <div className="fb-section">
-            <label className="fb-label">Dictionary</label>
-            <textarea
-              className="fb-input fb-textarea"
-              rows={3}
-              value={settings.dictionary.join("\n")}
-              onChange={(e) => update("dictionary", e.target.value.split("\n").map(s => s.trim()).filter(Boolean))}
-              placeholder="One name or term per line. e.g.&#10;ClickFunnels&#10;Spontent&#10;Russell"
-            />
-            <div className="fb-hint">
-              Brand names, jargon, project names. Cleanup preserves these spellings even when Whisper hears them slightly off.
-            </div>
-          </div>
-
-          <div className="fb-section">
-            <label className="fb-label">History retention</label>
             <div className="fb-radios">
               {RETENTION_OPTIONS.map(opt => (
                 <button
                   key={opt.days}
                   className={`fb-pill ${settings.history_retention_days === opt.days ? "on" : ""}`}
-                  onClick={() => update("history_retention_days", opt.days)}
+                  onClick={() => setAndSave("history_retention_days", opt.days, true)}
                 >{opt.label}</button>
               ))}
             </div>
             <div className="fb-hint">
-              History is local-only — never sent to any cloud. Old entries auto-delete on save / launch. Stored at <code>~/.funbutton/history.db</code>.
+              never sent to any cloud. old entries auto-delete on launch and on change.
             </div>
           </div>
 
-          <div className="fb-stats">
-            <span><b>{settings.words_today}</b> words today</span>
-            {last && (
-              <span>last: <b>{last.word_count}</b> words · <b>{last.mode}</b> mode · <b>{last.backend}</b></span>
-            )}
-          </div>
-
-          <div className="fb-actions">
-            <button className="fb-btn" onClick={save}>{saved ? "saved ✓" : "save"}</button>
-          </div>
+          {last && (
+            <div className="fb-stats">
+              <span>last: <b>{last.word_count}</b> words · <b>{last.mode}</b> · <b>{last.backend}</b></span>
+            </div>
+          )}
 
           <div className="fb-section">
-            <label className="fb-label">Help</label>
             <button
               className="fb-btn-small"
               onClick={() => invoke("open_onboarding")}
               style={{ alignSelf: "flex-start" }}
             >Replay onboarding ↻</button>
-            <div className="fb-hint">Walks through the Fn key intro, the three permissions, and the cleanup setup again.</div>
+            <div className="fb-hint">the Fn key intro, the three permissions, and the cleanup setup — again.</div>
           </div>
 
           <footer className="fb-footer">
-            v0.1.3 · GPLv3 · <a href="https://github.com/todddickerson/funbutton" target="_blank" rel="noreferrer">github</a>
+            v0.1.4 · GPLv3 · <a href="https://github.com/todddickerson/funbutton" target="_blank" rel="noreferrer">github</a>
           </footer>
         </div>
+        </div>
       ) : tab === "license" ? (
+        <div className="fb-scroll">
         <LicensePanel
           settings={settings}
           info={licenseInfo}
@@ -665,8 +827,10 @@ function App() {
           }}
           onOpenPortal={openPortal}
         />
+        </div>
       ) : (
         // history tab
+        <div className="fb-scroll">
         <div className="fb-form">
           {lastFailed && (
             <div className="fb-banner-fail">
@@ -698,38 +862,45 @@ function App() {
           </div>
 
           {history.length === 0 ? (
-            <div className="fb-history-empty">No history yet. Hold {settings.hotkey_kind === "fn" ? "Fn (the Fun Button)" : "Right Option"} and dictate something.</div>
+            <div className="fb-history-empty">
+              nothing yet. hold {settings.hotkey_kind === "fn" ? "Fn" : "Right Option"} and say something.
+            </div>
           ) : (
             <div className="fb-history-list">
-              {history.map(h => (
-                <div key={h.id} className={`fb-history-row ${h.paste_succeeded ? "" : "fb-history-failed"}`}>
-                  <div className="fb-history-meta">
-                    <span className="fb-history-ts">{fmtTs(h.ts)}</span>
-                    <span className="fb-history-mode">{h.mode_used}</span>
-                    {h.frontmost_app && <span className="fb-history-app">{h.frontmost_app}</span>}
-                    {h.audio_duration_ms != null && <span className="fb-history-dur">{(h.audio_duration_ms / 1000).toFixed(1)}s</span>}
-                    {!h.paste_succeeded && <span className="fb-history-flag">paste failed</span>}
-                  </div>
-                  <div className="fb-history-cleaned">{h.cleaned_text}</div>
-                  {h.raw_transcript !== h.cleaned_text && (
-                    <details className="fb-history-raw-wrap">
-                      <summary>raw</summary>
-                      <div className="fb-history-raw">{h.raw_transcript}</div>
-                    </details>
-                  )}
-                  <div className="fb-history-actions">
-                    <button className="fb-btn-small" onClick={() => copyEntry(h.id)}>
-                      {copiedId === h.id ? "copied ✓" : "copy"}
-                    </button>
-                  </div>
+              {historyGroups.map(g => (
+                <div className="fb-history-group" key={g.label}>
+                  <div className="fb-history-day">{g.label}</div>
+                  {g.items.map(h => (
+                    <div key={h.id} className={`fb-history-row ${h.paste_succeeded ? "" : "fb-history-failed"}`}>
+                      <div className="fb-history-meta">
+                        <span className="fb-history-ts">{fmtTs(h.ts)}</span>
+                        {h.frontmost_app && <span className="fb-history-app">{h.frontmost_app}</span>}
+                        <span className="fb-history-mode">{h.mode_used}</span>
+                        {h.audio_duration_ms != null && <span className="fb-history-dur">{(h.audio_duration_ms / 1000).toFixed(1)}s</span>}
+                        {!h.paste_succeeded && <span className="fb-history-flag">paste failed</span>}
+                        <span className="fb-history-spacer" />
+                        <button className="fb-btn-small" onClick={() => copyEntry(h.id)}>
+                          {copiedId === h.id ? "copied ✓" : "copy"}
+                        </button>
+                      </div>
+                      <div className="fb-history-cleaned">{h.cleaned_text}</div>
+                      {h.raw_transcript !== h.cleaned_text && (
+                        <details className="fb-history-raw-wrap">
+                          <summary>as heard</summary>
+                          <div className="fb-history-raw">{h.raw_transcript}</div>
+                        </details>
+                      )}
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
           )}
 
           <footer className="fb-footer">
-            local-only · {history.length} entries · auto-delete after {settings.history_retention_days === 0 ? "never" : `${settings.history_retention_days} days`}
+            local-only · {history.length} entries · auto-delete: {settings.history_retention_days === 0 ? "never" : `${settings.history_retention_days} days`}
           </footer>
+        </div>
         </div>
       )}
 
@@ -753,6 +924,71 @@ function App() {
         ))}
       </div>
     </main>
+  );
+}
+
+// -------------------- Engine status row --------------------
+
+type EngineRowState = "ready" | "busy" | "failed" | "off";
+
+function EngineRow(props: { state: EngineRowState; name: string; detail: string; label: string }) {
+  const glyph = props.state === "ready" ? "●" : props.state === "busy" ? "◐" : props.state === "failed" ? "✕" : "○";
+  return (
+    <div className={`fb-eng eng-${props.state}`}>
+      <span className="fb-eng-dot" aria-hidden>{glyph}</span>
+      <span className="fb-eng-name">{props.name}</span>
+      <span className="fb-eng-detail">{props.detail}</span>
+      <span className="fb-eng-state">{props.label}</span>
+    </div>
+  );
+}
+
+// -------------------- Dictionary chip editor --------------------
+// Settings.dictionary stays string[] — this is presentation only.
+
+function DictionaryEditor(props: { words: string[]; onChange: (w: string[]) => void }) {
+  const { words, onChange } = props;
+  const [draft, setDraft] = useState("");
+
+  function commit() {
+    const parts = draft.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+    if (parts.length === 0) return;
+    const next = [...words];
+    for (const p of parts) {
+      if (!next.includes(p)) next.push(p);
+    }
+    setDraft("");
+    if (next.length !== words.length) onChange(next);
+  }
+
+  return (
+    <div className="fb-dict">
+      {words.map(w => (
+        <span className="fb-chip" key={w}>
+          {w}
+          <button
+            className="fb-chip-x"
+            aria-label={`remove ${w}`}
+            onClick={() => onChange(words.filter(x => x !== w))}
+          >×</button>
+        </span>
+      ))}
+      <input
+        className="fb-chip-input"
+        value={draft}
+        placeholder={words.length === 0 ? "ClickFunnels, kubectl, Qwen…" : "add term…"}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === ",") {
+            e.preventDefault();
+            commit();
+          } else if (e.key === "Backspace" && draft === "" && words.length > 0) {
+            onChange(words.slice(0, -1));
+          }
+        }}
+        onBlur={commit}
+      />
+    </div>
   );
 }
 
@@ -791,11 +1027,11 @@ function LicensePanel(p: LicensePanelProps) {
     <div className="fb-form">
       {!hasLicense && (
         <div className="fb-section">
-          <label className="fb-label">No license — running in BYOK mode</label>
+          <label className="fb-label">No license. Everything still works.</label>
           <div className="fb-hint">
-            FunButton stays 100% functional on the free tier (Groq BYOK or local Ollama).
-            Upgrade unlocks Claude Haiku / Sonnet / Opus / GPT-4.1 cleanup, 50K
-            premium words/mo included on Pro, and metered overage with a user-set cap.
+            the free tier is the whole app — bundled models, Groq BYOK, Ollama, forever.
+            a license adds Claude Haiku / Sonnet / Opus / GPT-4.1 cleanup, 50K premium
+            words/mo on Pro, and metered overage with a cap you set.
           </div>
           <a
             className="fb-btn"
@@ -881,7 +1117,7 @@ function LicensePanel(p: LicensePanelProps) {
             <div className="fb-hint">
               {PREMIUM_MODELS.find(m => m.value === settings.premium_model)?.rate}
               <br />
-              Cleanup falls back to fast tier automatically if your monthly cap is hit.
+              cleanup falls back to fast tier automatically if your monthly cap is hit.
             </div>
           </div>
 
@@ -902,9 +1138,9 @@ function LicensePanel(p: LicensePanelProps) {
               </div>
             </div>
             <div className="fb-hint">
-              <strong>$0 = hard stop.</strong> When your spend hits the cap (or any time at $0),
-              cleanup silently falls back to free Groq fast tier with a toast.
-              You can raise / lower / disable this any time. Opt-in OFF by default.
+              <strong>$0 = hard stop.</strong> when spend hits the cap, cleanup silently
+              falls back to the free fast tier and you get a toast. raise, lower, or kill
+              it any time. off by default.
             </div>
             {p.capDraftCents !== info?.cap_cents && (
               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
@@ -967,11 +1203,17 @@ function truncate(s: string, n: number): string {
 
 function fmtTs(ts: number): string {
   const d = new Date(ts * 1000);
-  const today = new Date();
-  const sameDay = d.toDateString() === today.toDateString();
-  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  if (sameDay) return time;
-  return `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function dayLabel(ts: number): string {
+  const d = new Date(ts * 1000);
+  const now = new Date();
+  const today = now.toDateString();
+  const yesterday = new Date(now.getTime() - 86400000).toDateString();
+  if (d.toDateString() === today) return "today";
+  if (d.toDateString() === yesterday) return "yesterday";
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 function PermRow(props: {
@@ -991,7 +1233,7 @@ function PermRow(props: {
         <span className="fb-perm-state">granted</span>
       ) : (
         <button className="fb-btn-small fb-perm-grant" onClick={onGrant}>
-          Grant in System Settings
+          Grant
         </button>
       )}
     </div>
