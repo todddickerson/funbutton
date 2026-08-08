@@ -62,6 +62,7 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
     let mode_label = match mode {
         Mode::Auto => "auto",
         Mode::Code => "code",
+        Mode::Terminal => "terminal",
         Mode::Email => "email",
         Mode::Slack => "slack",
         Mode::Raw => "raw",
@@ -109,7 +110,10 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
                 if api_key.is_empty() {
                     continue;
                 }
-                ("groq-byok", groq::transcribe(&api_key, wav.clone()).await)
+                (
+                    "groq-byok",
+                    groq::transcribe(&api_key, wav.clone(), stt_prompt.as_deref()).await,
+                )
             }
         };
         match attempt {
@@ -140,7 +144,7 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
     *state.last_transcript.lock() = raw.clone();
     let base_prompt = cleanup::system_prompt(mode);
     let mut prompt = base_prompt.to_string();
-    if matches!(mode, Mode::Code) {
+    if mode.is_dev() {
         prompt.push_str(
             "\n\nDEV VOCABULARY (normalize to these exact spellings and casings when the user says them): ",
         );
@@ -163,7 +167,9 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
     // Cloud cleanup path: tries preferred premium model, silently falls back
     // to fast tier on HTTP 402 (cap exceeded). Worker enforces caps + rate limit.
     if let Some(cli) = &cloud {
-        let cloud_mode = mode_label;
+        // The worker's mode union is auto|email|slack|code|raw — the internal
+        // terminal mode rides the code prompt on the cloud path.
+        let cloud_mode = if mode == Mode::Terminal { "code" } else { mode_label };
         match cli
             .cleanup(&premium_model, &raw, cloud_mode, &dictionary)
             .await
@@ -246,16 +252,17 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
 }
 
 /// Vocabulary bias for the on-device whisper: the user's dictionary, plus
-/// (in code mode) the built-in dev vocabulary. whisper's initial prompt is
-/// capped (~224 tokens), so trim to a safe budget.
+/// (in code/terminal mode) the curated STT-facing dev vocabulary. whisper's
+/// initial prompt is capped (~224 tokens), so trim to a safe budget — user
+/// terms load first and outrank the built-ins if space runs out.
 fn build_stt_prompt(dictionary: &[String], mode: Mode) -> Option<String> {
     let mut terms: Vec<&str> = dictionary
         .iter()
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .collect();
-    if matches!(mode, Mode::Code) {
-        terms.extend(cleanup::DEV_DICTIONARY.iter().copied());
+    if mode.is_dev() {
+        terms.extend(cleanup::DEV_DICTIONARY_STT.iter().copied());
     }
     if terms.is_empty() {
         return None;

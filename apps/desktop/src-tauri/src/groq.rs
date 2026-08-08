@@ -48,18 +48,25 @@ struct WhisperResponse {
     text: String,
 }
 
-pub async fn transcribe(api_key: &str, wav: Vec<u8>) -> Result<String> {
+/// `prompt` is whisper's initial-prompt vocabulary bias — same ≈224-token
+/// semantics as the embedded model's initial prompt. The pipeline passes the
+/// user-dictionary + dev-vocab prompt here so the BYOK path gets identical
+/// dev-term accuracy ("kubectl", "pnpm", "Groq") to the offline path.
+pub async fn transcribe(api_key: &str, wav: Vec<u8>, prompt: Option<&str>) -> Result<String> {
     if api_key.trim().is_empty() {
         return Err(anyhow!("missing GROQ_API_KEY"));
     }
     let file_part = multipart::Part::bytes(wav)
         .file_name("audio.wav")
         .mime_str("audio/wav")?;
-    let form = multipart::Form::new()
+    let mut form = multipart::Form::new()
         .text("model", WHISPER_MODEL)
         .text("response_format", "json")
         .text("temperature", "0")
         .part("file", file_part);
+    if let Some(p) = prompt.map(str::trim).filter(|p| !p.is_empty()) {
+        form = form.text("prompt", p.to_string());
+    }
     let resp = GROQ_CLIENT
         .post(format!("{GROQ_BASE}/audio/transcriptions"))
         .bearer_auth(api_key)
