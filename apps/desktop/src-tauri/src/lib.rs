@@ -13,6 +13,7 @@ mod keychain;
 mod ollama;
 mod pipeline;
 mod state;
+mod tray;
 
 use crate::audio::Recorder;
 use crate::hotkey::HotkeyEvent;
@@ -23,11 +24,7 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
-use tauri::{
-    menu::{Menu, MenuItem},
-    tray::{TrayIcon, TrayIconBuilder},
-    AppHandle, Emitter, Manager,
-};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Serialize, Clone)]
 struct StatusEvent {
@@ -58,6 +55,7 @@ fn get_settings(state: tauri::State<'_, AppStateHandle>) -> Settings {
 
 #[tauri::command]
 fn save_settings(
+    app: AppHandle,
     state: tauri::State<'_, AppStateHandle>,
     settings: Settings,
 ) -> Result<(), String> {
@@ -88,6 +86,8 @@ fn save_settings(
         .store(settings.hotkey_kind.as_u8(), Ordering::SeqCst);
     log::info!("settings saved; armed hotkey = {:?}", settings.hotkey_kind);
     *state.settings.lock() = settings;
+    // Mode / hotkey changes show up in the tray menu immediately.
+    tray::sync(&app);
     Ok(())
 }
 
@@ -441,7 +441,7 @@ fn load_settings() -> Settings {
     s
 }
 
-fn persist(s: &Settings) -> anyhow::Result<()> {
+pub(crate) fn persist(s: &Settings) -> anyhow::Result<()> {
     let p = settings_path();
     let mut on_disk = s.clone();
     if KEY_IN_KEYCHAIN.load(Ordering::SeqCst) {
@@ -645,6 +645,7 @@ pub fn run() {
                             log::info!("embedded llama-server ready at {}", server.base_url());
                             *state_for_llm.embedded.lock() = Some(std::sync::Arc::new(server));
                             let _ = app_for_llm.emit("funbutton:embedded-ready", ());
+                            tray::sync(&app_for_llm);
                         }
                         Err(e) => {
                             log::warn!("embedded llama-server failed to start: {e:#}");
@@ -653,6 +654,7 @@ pub fn run() {
                                 "funbutton:embedded-failed",
                                 e.to_string(),
                             );
+                            tray::sync(&app_for_llm);
                         }
                     }
                 });
@@ -682,43 +684,14 @@ pub fn run() {
                 }
             }
 
-            // System tray
-            let handle = app.handle().clone();
-            let open_item = MenuItem::with_id(&handle, "open", "Settings", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(&handle, "quit", "Quit FunButton", true, None::<&str>)?;
-            let menu = Menu::with_items(&handle, &[&open_item, &quit_item])?;
-            let tray: TrayIcon = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .icon_as_template(true)
-                .tooltip("FunButton — hold Fn to dictate · ⌘⇧V re-paste · ⌘⇧H history")
-                .menu(&menu)
-                .on_menu_event(move |app, event| match event.id().as_ref() {
-                    "open" => {
-                        if let Some(w) = app.get_webview_window("settings") {
-                            let _ = w.show();
-                            let _ = w.set_focus();
-                        }
-                    }
-                    "quit" => {
-                        // Drop native resources explicitly — process exit
-                        // skips Drop impls, which would orphan the
-                        // llama-server child and can SIGABRT ggml-metal in
-                        // C++ static destructors with a live Metal context.
-                        let st = app.state::<AppStateHandle>();
-                        if let Some(srv) = st.embedded.lock().take() {
-                            srv.kill();
-                        }
-                        st.stt.unload();
-                        app.exit(0);
-                    }
-                    _ => {}
-                })
-                .build(app)?;
+            // System tray — state-aware menu + recording indicator; all
+            // AppKit mutations routed through tray::sync (main thread).
+            tray::init(&app.handle().clone())?;
 
             // Spawn the hotkey-event handler thread.
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
-                handle_hotkey_loop(app_handle, app_state_clone, recorder_clone, rx, tray);
+                handle_hotkey_loop(app_handle, app_state_clone, recorder_clone, rx);
             });
 
             Ok(())
@@ -745,7 +718,6 @@ fn handle_hotkey_loop(
     state: AppStateHandle,
     recorder: Arc<PMutex<Recorder>>,
     rx: mpsc::Receiver<HotkeyEvent>,
-    tray: TrayIcon,
 ) {
     // Tokio runtime for async pipeline calls.
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -767,7 +739,9 @@ fn handle_hotkey_loop(
                 match rec.start() {
                     Ok(()) => {
                         *state.status.lock() = Status::Recording;
-                        let _ = tray.set_tooltip(Some("FunButton — recording"));
+                        // ● appears next to the menu-bar icon while the mic
+                        // is hot — recording is visible without any window.
+                        tray::sync(&app);
                         emit_status(&app, Status::Recording, None);
                         if let Some(p) = app.get_webview_window("pill") {
                             let _ = p.show();
@@ -776,6 +750,7 @@ fn handle_hotkey_loop(
                     Err(e) => {
                         log::error!("recorder start failed: {e:#}");
                         *state.status.lock() = Status::Error;
+                        tray::sync(&app);
                         emit_status(&app, Status::Error, Some(format!("audio: {e}")));
                     }
                 }
@@ -787,7 +762,7 @@ fn handle_hotkey_loop(
                         // Less than ~50ms at 48kHz stereo — likely an accidental tap.
                         let _ = rec.stop_and_encode_wav();
                         *state.status.lock() = Status::Idle;
-                        let _ = tray.set_tooltip(Some("FunButton — hold Fn to dictate"));
+                        tray::sync(&app);
                         if let Some(p) = app.get_webview_window("pill") {
                             let _ = p.hide();
                         }
@@ -800,6 +775,7 @@ fn handle_hotkey_loop(
                         Err(e) => {
                             log::error!("recorder stop failed: {e:#}");
                             *state.status.lock() = Status::Error;
+                            tray::sync(&app);
                             emit_status(&app, Status::Error, Some(format!("encode: {e}")));
                             continue;
                         }
@@ -825,9 +801,11 @@ fn handle_hotkey_loop(
 
                 let app_h = app.clone();
                 let state_h = Arc::clone(&state);
-                let tray_h = tray.clone();
                 rt.spawn(async move {
-                    let _ = tray_h.set_tooltip(Some("FunButton — transcribing"));
+                    // Pipeline sets Transcribing itself, but flip it here
+                    // first so the ● → … handoff in the menu bar is instant.
+                    *state_h.status.lock() = Status::Transcribing;
+                    tray::sync(&app_h);
                     let result = pipeline::run(Arc::clone(&state_h), wav).await;
                     if let Some(p) = app_h.get_webview_window("pill") {
                         let _ = p.hide();
@@ -930,13 +908,13 @@ fn handle_hotkey_loop(
                                 },
                             );
                             *state_h.status.lock() = Status::Idle;
-                            let _ = tray_h.set_tooltip(Some("FunButton — hold Fn to dictate"));
+                            tray::sync(&app_h);
                             emit_status(&app_h, Status::Idle, None);
                         }
                         Err(e) => {
                             log::error!("pipeline failed: {e:#}");
                             *state_h.status.lock() = Status::Error;
-                            let _ = tray_h.set_tooltip(Some("FunButton — error"));
+                            tray::sync(&app_h);
                             emit_status(&app_h, Status::Error, Some(format!("{e:#}")));
                         }
                     }
