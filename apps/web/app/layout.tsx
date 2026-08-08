@@ -13,22 +13,23 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FunButton.ai — coming soon",
+  title: "FunButton — the dictation button for developers",
   description:
-    "Talk fast. Stay local. Pay less. Voice dictation for people who actually ship. Built in public.",
+    "Hold Fn. Talk. Release. On-device Whisper + local AI cleanup types clean text at your cursor. No API key, no account, no cloud. GPLv3, lifetime pricing.",
   metadataBase: new URL("https://funbutton.ai"),
   openGraph: {
-    title: "FunButton.ai — coming soon",
+    title: "FunButton — the dictation button for developers",
     description:
-      "Talk fast. Stay local. Pay less. Wispr Flow without the SaaS. Built in public.",
+      "Push-to-talk dictation for terminals, editors, and coding agents. Fully on-device, no API key ever. GPLv3 + lifetime pricing.",
     url: "https://funbutton.ai",
     siteName: "FunButton",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "FunButton.ai — coming soon",
-    description: "Talk fast. Stay local. Pay less. Built in public.",
+    title: "FunButton — the dictation button for developers",
+    description:
+      "Hold Fn. Talk. Clean text at your cursor, all on-device. No API key ever.",
   },
 };
 
