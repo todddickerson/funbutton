@@ -2,6 +2,24 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-08-08 09:45 — GAUNTLET LOOP v2: polish pass across all six user-facing surfaces
+
+**Worker + blind-critic gauntlet (max 3 rounds/piece) on onboarding, settings, pill HUD, tray, dev-first engine, and the landing page. All six pieces converged to PASS; nothing passed round 1, so the bar did real work. Branch `gauntlet-v2-polish`, PR open for review — no release cut, no deploy.**
+
+**Done:**
+- Onboarding: grants animate as a circuit closing, live-poll made visible, engine-warmup staged as ignition, crafted keyboard hero, real end-to-end try-it step, denied/revoked recovery paths, Fn/emoji-picker collision fix surfaced.
+- Settings: single ENGINES status board, per-app mode map shown (incl. new terminal mode), dictionary chip editor, day-grouped history with paste-failure triage, instant-save interaction model, light+dark verified at 540x680.
+- Pill HUD: real-mic waveform (RMS via AnalyserNode), 340x96 bottom-center on the cursor's monitor, distinct state layers, "code mode · Cursor" receipt on paste, airtight mic/RAF teardown.
+- Tray: ● recording glyph in the menu bar, live status + engine telemetry with click-to-fix, mode quick-switch, copy-last, start-at-login, replay onboarding; all AppKit mutations routed through run_on_main_thread.
+- Dev-first engine (the wedge): curated two-tier DEV_DICTIONARY with whisper 224-token budget handling, CODE_PROMPT covering spoken flags/paths/versions/git conventions, new auto-detected TERMINAL mode (literal commands, never prose), Groq BYOK STT now gets vocabulary bias, 23 unit tests green.
+- Landing: real project page — dev-first hero, animated terminal demo, honest comparison table (Wispr/Handy/VoiceInk), install + pricing preserved, OG image, all prior slop violations (glow shadows, 14px input) killed.
+- Gates: cargo check/build --release clean · 23/23 lib tests · keyless offline STT proof passes ("Refactor the auth middleware and open a pull request.") · rdev/TIS grep clean · desktop tsc+vite + web next build+eslint clean.
+- GAUNTLET-ROUNDS.md (auditable PASS/FAIL log) + GAUNTLET-FINDINGS.md (~200 deduped findings, top-14 curated) at repo root.
+
+**Next:** Todd reviews PR; top findings queue: real product visual on landing, deep-context cleanup, editable per-app mode rules, premium-cloud dev parity.
+
+**Blocked:** none.
+
 ## 2026-08-02 11:11 — v0.1.4: macOS 26 crash fix (SIGTRAP on keypress during setup)
 
 **Tester on M4 / macOS 26.6 couldn't get through onboarding — app SIGTRAP'd ~15s in, the moment a key event arrived. Root cause + fix shipped.**
