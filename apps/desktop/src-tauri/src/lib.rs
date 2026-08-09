@@ -847,8 +847,18 @@ fn handle_hotkey_loop(
                             // Insert history row BEFORE paste, so even if paste fails the
                             // cleaned text is preserved.
                             let frontmost = r.frontmost.clone();
+                            // Honest per-backend label — runtime QA caught a
+                            // fully-offline embedded run recorded as
+                            // "groq-…", which undercuts the local-only story.
                             let model_used = match r.backend_used {
-                                "local" => format!("ollama-{}", state_h.settings.lock().ollama_model),
+                                "embedded" => "embedded-qwen2.5-1.5b".to_string(),
+                                "ollama" | "local" => {
+                                    format!("ollama-{}", state_h.settings.lock().ollama_model)
+                                }
+                                "cloud" | "cloud-fallback" => {
+                                    format!("cloud-{}", state_h.settings.lock().premium_model)
+                                }
+                                "raw-passthrough" => "raw-passthrough".to_string(),
                                 _ => format!("groq-{}", crate::groq::LLAMA_MODEL),
                             };
                             let history_id = match state_h.history.insert_pre_paste(
