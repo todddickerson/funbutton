@@ -37,12 +37,7 @@ pub async fn is_available(base_url: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub async fn generate(
-    base_url: &str,
-    model: &str,
-    system: &str,
-    user: &str,
-) -> Result<String> {
+pub async fn generate(base_url: &str, model: &str, system: &str, user: &str) -> Result<String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(90))
         .build()?;
@@ -51,7 +46,10 @@ pub async fn generate(
         model,
         prompt,
         stream: false,
-        options: Options { temperature: 0.2, num_predict: 1024 },
+        options: Options {
+            temperature: 0.2,
+            num_predict: 1024,
+        },
     };
     let resp = client
         .post(format!("{}/api/generate", base_url.trim_end_matches('/')))

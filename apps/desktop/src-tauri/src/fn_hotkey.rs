@@ -40,84 +40,86 @@ pub fn spawn_listener(tx: std::sync::mpsc::Sender<HotkeyEvent>, armed: Arc<Atomi
     use std::sync::atomic::{AtomicBool, Ordering};
 
     std::thread::spawn(move || {
-      // Defensive isolation: a Rust-level panic (crate is built panic=unwind)
-      // in the tap callback or runloop logs loudly and lets this thread die
-      // instead of killing the whole app. A hard trap (e.g. an off-main-thread
-      // HIToolbox assertion on macOS 26) is NOT a Rust panic and can't be
-      // caught here — this tap deliberately touches no layout APIs, so there is
-      // nothing to trap.
-      let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-        let last = Arc::new(AtomicBool::new(false));
-        // Tap creation fails while Input Monitoring is denied (TCC checks
-        // happen at CGEventTapCreate time). Retrying means a grant made
-        // mid-onboarding arms the Fn key within seconds — no relaunch. The
-        // failure is logged once; retries are silent.
-        let mut warned = false;
-        loop {
-            let last_cb = Arc::clone(&last);
-            let tx_cb = tx.clone();
-            let armed_cb = Arc::clone(&armed);
+        // Defensive isolation: a Rust-level panic (crate is built panic=unwind)
+        // in the tap callback or runloop logs loudly and lets this thread die
+        // instead of killing the whole app. A hard trap (e.g. an off-main-thread
+        // HIToolbox assertion on macOS 26) is NOT a Rust panic and can't be
+        // caught here — this tap deliberately touches no layout APIs, so there is
+        // nothing to trap.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let last = Arc::new(AtomicBool::new(false));
+            // Tap creation fails while Input Monitoring is denied (TCC checks
+            // happen at CGEventTapCreate time). Retrying means a grant made
+            // mid-onboarding arms the Fn key within seconds — no relaunch. The
+            // failure is logged once; retries are silent.
+            let mut warned = false;
+            loop {
+                let last_cb = Arc::clone(&last);
+                let tx_cb = tx.clone();
+                let armed_cb = Arc::clone(&armed);
 
-            let result = CGEventTap::with_enabled(
-                CGEventTapLocation::HID,
-                CGEventTapPlacement::HeadInsertEventTap,
-                CGEventTapOptions::ListenOnly,
-                vec![CGEventType::FlagsChanged],
-                move |_proxy, _etype, event| {
-                    let flags = event.get_flags();
-                    let fn_now = flags.contains(CGEventFlags::CGEventFlagSecondaryFn);
-                    let fn_was = last_cb.swap(fn_now, Ordering::SeqCst);
-                    // Only emit if the Fn hotkey is the currently armed one.
-                    let armed_kind = HotkeyKind::from_u8(armed_cb.load(Ordering::SeqCst));
-                    if !matches!(armed_kind, HotkeyKind::Fn) {
-                        return CallbackResult::Keep;
-                    }
-                    if fn_now && !fn_was {
-                        log::info!("hotkey: Fn DOWN");
-                        let _ = tx_cb.send(HotkeyEvent::Down);
-                    } else if !fn_now && fn_was {
-                        log::info!("hotkey: Fn UP");
-                        let _ = tx_cb.send(HotkeyEvent::Up);
-                    }
-                    CallbackResult::Keep
-                },
-                || {
-                    log::info!("Fn key tap installed (Input Monitoring granted); running CFRunLoop");
-                    CFRunLoop::run_current();
-                },
-            );
+                let result = CGEventTap::with_enabled(
+                    CGEventTapLocation::HID,
+                    CGEventTapPlacement::HeadInsertEventTap,
+                    CGEventTapOptions::ListenOnly,
+                    vec![CGEventType::FlagsChanged],
+                    move |_proxy, _etype, event| {
+                        let flags = event.get_flags();
+                        let fn_now = flags.contains(CGEventFlags::CGEventFlagSecondaryFn);
+                        let fn_was = last_cb.swap(fn_now, Ordering::SeqCst);
+                        // Only emit if the Fn hotkey is the currently armed one.
+                        let armed_kind = HotkeyKind::from_u8(armed_cb.load(Ordering::SeqCst));
+                        if !matches!(armed_kind, HotkeyKind::Fn) {
+                            return CallbackResult::Keep;
+                        }
+                        if fn_now && !fn_was {
+                            log::info!("hotkey: Fn DOWN");
+                            let _ = tx_cb.send(HotkeyEvent::Down);
+                        } else if !fn_now && fn_was {
+                            log::info!("hotkey: Fn UP");
+                            let _ = tx_cb.send(HotkeyEvent::Up);
+                        }
+                        CallbackResult::Keep
+                    },
+                    || {
+                        log::info!(
+                            "Fn key tap installed (Input Monitoring granted); running CFRunLoop"
+                        );
+                        CFRunLoop::run_current();
+                    },
+                );
 
-            match result {
-                Ok(_) => {
-                    // Runloop stopped (shouldn't happen in normal operation) —
-                    // reinstall after a pause rather than losing the hotkey.
-                    log::warn!("Fn key tap runloop exited; reinstalling in 3s");
-                    warned = false;
-                }
-                Err(_) => {
-                    if !warned {
-                        warned = true;
-                        log::error!(
+                match result {
+                    Ok(_) => {
+                        // Runloop stopped (shouldn't happen in normal operation) —
+                        // reinstall after a pause rather than losing the hotkey.
+                        log::warn!("Fn key tap runloop exited; reinstalling in 3s");
+                        warned = false;
+                    }
+                    Err(_) => {
+                        if !warned {
+                            warned = true;
+                            log::error!(
                             "Fn key tap creation FAILED — Input Monitoring permission not granted. \
                              macOS Settings → Privacy & Security → Input Monitoring → enable FunButton \
                              (takes effect within seconds; retrying every 3s), \
                              OR switch to Right Option in Settings."
                         );
+                        }
                     }
                 }
+                std::thread::sleep(std::time::Duration::from_secs(3));
             }
-            std::thread::sleep(std::time::Duration::from_secs(3));
-        }
-      }));
+        }));
 
-      // The loop above never returns normally, so reaching here means a panic
-      // unwound out of it.
-      if outcome.is_err() {
-          log::error!(
-              "Fn listener thread panicked and exited; Fn hotkey unavailable until app restart \
+        // The loop above never returns normally, so reaching here means a panic
+        // unwound out of it.
+        if outcome.is_err() {
+            log::error!(
+                "Fn listener thread panicked and exited; Fn hotkey unavailable until app restart \
                (other listeners and the rest of the app keep running)."
-          );
-      }
+            );
+        }
     });
 }
 

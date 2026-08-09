@@ -182,7 +182,11 @@ fn build_menu(app: &AppHandle, s: &Snapshot) -> tauri::Result<Menu<Wry>> {
     // Mode quick-switch — radio via CheckMenuItems; persists through the
     // same settings save path the Settings window uses.
     let modes: [(&str, ModeOverride, &str); 5] = [
-        ("mode_auto", ModeOverride::Auto, "Auto (match the front app)"),
+        (
+            "mode_auto",
+            ModeOverride::Auto,
+            "Auto (match the front app)",
+        ),
         ("mode_code", ModeOverride::Code, "Code"),
         ("mode_email", ModeOverride::Email, "Email"),
         ("mode_slack", ModeOverride::Slack, "Slack"),
@@ -199,8 +203,10 @@ fn build_menu(app: &AppHandle, s: &Snapshot) -> tauri::Result<Menu<Wry>> {
             None::<&str>,
         )?);
     }
-    let mode_refs: Vec<&dyn IsMenuItem<Wry>> =
-        mode_items.iter().map(|i| i as &dyn IsMenuItem<Wry>).collect();
+    let mode_refs: Vec<&dyn IsMenuItem<Wry>> = mode_items
+        .iter()
+        .map(|i| i as &dyn IsMenuItem<Wry>)
+        .collect();
     let mode_menu = Submenu::with_id_and_items(
         app,
         "mode_menu",
@@ -227,8 +233,13 @@ fn build_menu(app: &AppHandle, s: &Snapshot) -> tauri::Result<Menu<Wry>> {
         Some("CmdOrCtrl+Shift+H"),
     )?;
     let settings_item = MenuItem::with_id(app, "open", "Settings…", true, None::<&str>)?;
-    let onboarding_item =
-        MenuItem::with_id(app, "replay_onboarding", "Replay Onboarding", true, None::<&str>)?;
+    let onboarding_item = MenuItem::with_id(
+        app,
+        "replay_onboarding",
+        "Replay Onboarding",
+        true,
+        None::<&str>,
+    )?;
     let autostart_item = CheckMenuItem::with_id(
         app,
         "autostart",
@@ -425,7 +436,7 @@ fn fmt_thousands(n: u64) -> String {
     let raw = n.to_string();
     let mut out = String::with_capacity(raw.len() + raw.len() / 3);
     for (i, c) in raw.chars().enumerate() {
-        if i > 0 && (raw.len() - i) % 3 == 0 {
+        if i > 0 && (raw.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);

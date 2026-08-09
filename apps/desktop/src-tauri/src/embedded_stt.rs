@@ -47,14 +47,20 @@ pub type EmbeddedSttHandle = Arc<EmbeddedStt>;
 fn locate_model(app: &tauri::AppHandle) -> Result<PathBuf> {
     use tauri::Manager as _;
     if let Ok(resource_dir) = app.path().resource_dir() {
-        let p = resource_dir.join("vendor").join("whisper").join(BUNDLED_STT_MODEL_FILE);
+        let p = resource_dir
+            .join("vendor")
+            .join("whisper")
+            .join(BUNDLED_STT_MODEL_FILE);
         if p.exists() {
             return Ok(p);
         }
     }
     let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
     if !manifest.is_empty() {
-        let p = PathBuf::from(manifest).join("vendor").join("whisper").join(BUNDLED_STT_MODEL_FILE);
+        let p = PathBuf::from(manifest)
+            .join("vendor")
+            .join("whisper")
+            .join(BUNDLED_STT_MODEL_FILE);
         if p.exists() {
             return Ok(p);
         }
@@ -99,7 +105,10 @@ impl EmbeddedStt {
                 } else {
                     transcribe_cpp::Backend::Auto
                 };
-                let options = transcribe_cpp::ModelOptions { backend, gpu_device: 0 };
+                let options = transcribe_cpp::ModelOptions {
+                    backend,
+                    gpu_device: 0,
+                };
                 let model = transcribe_cpp::Model::load_with(&path, &options)
                     .with_context(|| format!("load whisper model at {}", path.display()))?;
                 log::info!(
@@ -135,7 +144,10 @@ impl EmbeddedStt {
         }
 
         let Some(mut session) = self.session.lock().take() else {
-            return Err(anyhow!("embedded STT not ready ({:?})", self.status().label()));
+            return Err(anyhow!(
+                "embedded STT not ready ({:?})",
+                self.status().label()
+            ));
         };
 
         let family = initial_prompt.filter(|p| !p.is_empty()).map(|p| {
@@ -249,14 +261,9 @@ fn resample_to_16k(samples: Vec<f32>, in_rate: u32) -> Result<Vec<f32>> {
     }
     use rubato::Resampler;
     const CHUNK: usize = 1024;
-    let mut rs = rubato::FftFixedIn::<f32>::new(
-        in_rate as usize,
-        WHISPER_SAMPLE_RATE as usize,
-        CHUNK,
-        1,
-        1,
-    )
-    .context("create resampler")?;
+    let mut rs =
+        rubato::FftFixedIn::<f32>::new(in_rate as usize, WHISPER_SAMPLE_RATE as usize, CHUNK, 1, 1)
+            .context("create resampler")?;
     let mut padded = samples;
     let rem = padded.len() % CHUNK;
     if rem != 0 {
@@ -265,9 +272,7 @@ fn resample_to_16k(samples: Vec<f32>, in_rate: u32) -> Result<Vec<f32>> {
     let mut out =
         Vec::with_capacity(padded.len() * WHISPER_SAMPLE_RATE as usize / in_rate as usize + CHUNK);
     for block in padded.chunks_exact(CHUNK) {
-        let processed = rs
-            .process(&[block], None)
-            .context("resample block")?;
+        let processed = rs.process(&[block], None).context("resample block")?;
         out.extend_from_slice(&processed[0]);
     }
     Ok(out)
@@ -294,12 +299,21 @@ fn strip_whisper_artifacts(text: &str) -> String {
             // sentence content: [BLANK_AUDIO], [MUSIC], (laughs), (silence).
             let is_artifact = closed
                 && token.len() <= 24
-                && !token.contains(|t: char| t == ',' || t == '.')
-                && (token.chars().all(|t| !t.is_alphabetic() || t.is_uppercase() || t == '_')
+                && !token.contains([',', '.'])
+                && (token
+                    .chars()
+                    .all(|t| !t.is_alphabetic() || t.is_uppercase() || t == '_')
                     || matches!(
                         token.to_lowercase().as_str(),
-                        "laughs" | "laughter" | "music" | "silence" | "noise" | "applause"
-                            | "inaudible" | "blank_audio" | "sound"
+                        "laughs"
+                            | "laughter"
+                            | "music"
+                            | "silence"
+                            | "noise"
+                            | "applause"
+                            | "inaudible"
+                            | "blank_audio"
+                            | "sound"
                     ));
             if !is_artifact {
                 out.push(c);
@@ -322,7 +336,10 @@ mod tests {
     #[test]
     fn strips_blank_audio() {
         assert_eq!(strip_whisper_artifacts(" [BLANK_AUDIO] "), "");
-        assert_eq!(strip_whisper_artifacts("hello [MUSIC] world"), "hello world");
+        assert_eq!(
+            strip_whisper_artifacts("hello [MUSIC] world"),
+            "hello world"
+        );
         assert_eq!(strip_whisper_artifacts("(laughs) ok"), "ok");
         // Real content in brackets survives.
         assert_eq!(
@@ -340,7 +357,10 @@ mod tests {
         let model = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("vendor/whisper")
             .join(BUNDLED_STT_MODEL_FILE);
-        assert!(model.exists(), "vendor model missing — run scripts/fetch-vendor-deps.sh");
+        assert!(
+            model.exists(),
+            "vendor model missing — run scripts/fetch-vendor-deps.sh"
+        );
         let wav_path = std::env::var("FUNBUTTON_TEST_WAV").expect("set FUNBUTTON_TEST_WAV");
         let bytes = std::fs::read(&wav_path).expect("read test wav");
         let stt = EmbeddedStt::new();
@@ -358,6 +378,10 @@ mod tests {
         let input = vec![0.5f32; 48_000];
         let out = resample_to_16k(input, 48_000).unwrap();
         // 1 s of 48 kHz → ~1 s of 16 kHz (± resampler latency)
-        assert!((out.len() as i64 - 16_000).abs() < 2_000, "got {}", out.len());
+        assert!(
+            (out.len() as i64 - 16_000).abs() < 2_000,
+            "got {}",
+            out.len()
+        );
     }
 }

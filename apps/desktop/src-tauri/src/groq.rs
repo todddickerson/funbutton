@@ -114,19 +114,21 @@ struct OwnedMessage {
     content: String,
 }
 
-pub async fn chat_complete(
-    api_key: &str,
-    system: &str,
-    user: &str,
-) -> Result<String> {
+pub async fn chat_complete(api_key: &str, system: &str, user: &str) -> Result<String> {
     if api_key.trim().is_empty() {
         return Err(anyhow!("missing GROQ_API_KEY"));
     }
     let body = ChatRequest {
         model: LLAMA_MODEL,
         messages: vec![
-            ChatMessage { role: "system", content: system },
-            ChatMessage { role: "user", content: user },
+            ChatMessage {
+                role: "system",
+                content: system,
+            },
+            ChatMessage {
+                role: "user",
+                content: user,
+            },
         ],
         temperature: 0.2,
         max_tokens: Some(1024),

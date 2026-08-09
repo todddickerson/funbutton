@@ -52,13 +52,46 @@ impl FrontApp {
         let n = name.to_lowercase();
         if n.contains("cursor") {
             FrontApp::Cursor
-        } else if n.contains("code") && n.contains("visual") || n == "code" || n == "code - insiders" || n == "vscodium" {
+        } else if n.contains("code") && n.contains("visual")
+            || n == "code"
+            || n == "code - insiders"
+            || n == "vscodium"
+        {
             FrontApp::VSCode
-        } else if n.contains("intellij") || n.contains("pycharm") || n.contains("webstorm") || n.contains("rubymine") || n.contains("rustrover") || n.contains("goland") || n.contains("phpstorm") || n.contains("clion") || n.contains("android studio") || n.contains("datagrip") || n.contains("dataspell") || n == "rider" || n == "appcode" || n == "fleet" {
+        } else if n.contains("intellij")
+            || n.contains("pycharm")
+            || n.contains("webstorm")
+            || n.contains("rubymine")
+            || n.contains("rustrover")
+            || n.contains("goland")
+            || n.contains("phpstorm")
+            || n.contains("clion")
+            || n.contains("android studio")
+            || n.contains("datagrip")
+            || n.contains("dataspell")
+            || n == "rider"
+            || n == "appcode"
+            || n == "fleet"
+        {
             FrontApp::JetBrains
         } else if n == "vim" || n == "neovim" || n == "nvim" || n == "macvim" {
             FrontApp::Vim
-        } else if n == "terminal" || n == "iterm2" || n == "iterm" || n == "warp" || n == "alacritty" || n == "kitty" || n == "ghostty" || n == "wezterm" || n == "wezterm-gui" || n == "tabby" || n == "hyper" || n == "rio" || n == "wave" || n == "waveterm" || n == "termius" {
+        } else if n == "terminal"
+            || n == "iterm2"
+            || n == "iterm"
+            || n == "warp"
+            || n == "alacritty"
+            || n == "kitty"
+            || n == "ghostty"
+            || n == "wezterm"
+            || n == "wezterm-gui"
+            || n == "tabby"
+            || n == "hyper"
+            || n == "rio"
+            || n == "wave"
+            || n == "waveterm"
+            || n == "termius"
+        {
             FrontApp::Terminal
         } else if n == "zed" || n.starts_with("zed ") || n == "windsurf" || n.contains("sublime text") || n == "nova" || n == "textmate" || n == "bbedit" || n == "emacs" || n == "aquamacs" || n == "coteditor"
             // AI-first IDEs — the surfaces a dev-first dictation app lives in.
@@ -112,8 +145,19 @@ mod tests {
     #[test]
     fn classifies_terminals() {
         for name in [
-            "Terminal", "iTerm2", "Warp", "Alacritty", "kitty", "Ghostty",
-            "WezTerm", "wezterm-gui", "Tabby", "Hyper", "Rio", "Wave", "Termius",
+            "Terminal",
+            "iTerm2",
+            "Warp",
+            "Alacritty",
+            "kitty",
+            "Ghostty",
+            "WezTerm",
+            "wezterm-gui",
+            "Tabby",
+            "Hyper",
+            "Rio",
+            "Wave",
+            "Termius",
         ] {
             assert_eq!(c(name), FrontApp::Terminal, "{name} should be a terminal");
         }
@@ -122,9 +166,21 @@ mod tests {
     #[test]
     fn classifies_editors_and_ai_ides() {
         for name in [
-            "Zed", "Zed Preview", "Windsurf", "Sublime Text", "Nova", "TextMate",
-            "BBEdit", "Emacs", "CotEditor", "Kiro", "Trae", "Void", "PearAI",
-            "Positron", "Antigravity",
+            "Zed",
+            "Zed Preview",
+            "Windsurf",
+            "Sublime Text",
+            "Nova",
+            "TextMate",
+            "BBEdit",
+            "Emacs",
+            "CotEditor",
+            "Kiro",
+            "Trae",
+            "Void",
+            "PearAI",
+            "Positron",
+            "Antigravity",
         ] {
             assert!(
                 matches!(c(name), FrontApp::Editor(_)),
@@ -136,8 +192,13 @@ mod tests {
     #[test]
     fn classifies_git_clients_as_code_surfaces() {
         for name in [
-            "GitHub Desktop", "Fork", "Tower", "GitKraken", "Sublime Merge",
-            "Sourcetree", "GitUp",
+            "GitHub Desktop",
+            "Fork",
+            "Tower",
+            "GitKraken",
+            "Sublime Merge",
+            "Sourcetree",
+            "GitUp",
         ] {
             assert!(
                 matches!(c(name), FrontApp::Editor(_)),
@@ -152,8 +213,17 @@ mod tests {
             assert_eq!(c(name), FrontApp::VSCode, "{name}");
         }
         for name in [
-            "IntelliJ IDEA", "PyCharm", "WebStorm", "RustRover", "GoLand",
-            "CLion", "Android Studio", "DataGrip", "DataSpell", "Rider", "Fleet",
+            "IntelliJ IDEA",
+            "PyCharm",
+            "WebStorm",
+            "RustRover",
+            "GoLand",
+            "CLion",
+            "Android Studio",
+            "DataGrip",
+            "DataSpell",
+            "Rider",
+            "Fleet",
         ] {
             assert_eq!(c(name), FrontApp::JetBrains, "{name}");
         }

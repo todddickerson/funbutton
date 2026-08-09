@@ -42,10 +42,12 @@ impl History {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let conn = Connection::open(&path)
-            .with_context(|| format!("opening sqlite at {:?}", path))?;
+        let conn =
+            Connection::open(&path).with_context(|| format!("opening sqlite at {:?}", path))?;
         conn.execute_batch(SCHEMA).context("apply schema")?;
-        Ok(History { conn: Mutex::new(conn) })
+        Ok(History {
+            conn: Mutex::new(conn),
+        })
     }
 
     /// Insert a row immediately after cleanup completes, before paste.
@@ -103,7 +105,8 @@ impl History {
         sql.push_str(&format!(" ORDER BY ts DESC LIMIT {limit_placeholder}"));
         args.push(Box::new(limit));
 
-        let arg_refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| &**b as &dyn rusqlite::ToSql).collect();
+        let arg_refs: Vec<&dyn rusqlite::ToSql> =
+            args.iter().map(|b| &**b as &dyn rusqlite::ToSql).collect();
         let mut stmt = conn.prepare(&sql).context("prepare list query")?;
         let rows = stmt
             .query_map(rusqlite::params_from_iter(arg_refs), |r| {

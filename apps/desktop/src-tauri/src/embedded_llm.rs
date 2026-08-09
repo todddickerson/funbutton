@@ -42,7 +42,10 @@ fn locate_vendor(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf)> {
         }
     }
     // Last resort: try CWD-relative.
-    let cwd = std::env::current_dir().unwrap_or_default().join("vendor").join("llama");
+    let cwd = std::env::current_dir()
+        .unwrap_or_default()
+        .join("vendor")
+        .join("llama");
     if cwd.join(SERVER_BIN).exists() {
         return Ok((cwd.join(SERVER_BIN), cwd.join(BUNDLED_MODEL_FILE)));
     }
@@ -63,7 +66,9 @@ pub struct EmbeddedServer {
 }
 
 impl EmbeddedServer {
-    pub fn base_url(&self) -> &str { &self.base_url }
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
 
     /// Spawn llama-server pointing at the bundled GGUF. Returns once /health
     /// responds 200 or after STARTUP_TIMEOUT.
@@ -77,18 +82,26 @@ impl EmbeddedServer {
         }
         let port = pick_free_port()?;
         let base_url = format!("http://127.0.0.1:{port}");
-        log::info!("spawning llama-server on {base_url} with model {}", gguf.display());
+        log::info!(
+            "spawning llama-server on {base_url} with model {}",
+            gguf.display()
+        );
 
         // Flags: short ctx (cleanup is bounded), no warmup spam, OpenAI-compatible
         // chat at /v1/chat/completions enabled by default.
         let child = Command::new(&bin)
-            .arg("--host").arg("127.0.0.1")
-            .arg("--port").arg(port.to_string())
-            .arg("--model").arg(&gguf)
-            .arg("--ctx-size").arg("4096")
-            .arg("--threads").arg(num_threads().to_string())
-            .arg("--no-webui")     // skip the bundled chat UI
-            .arg("--log-disable")  // we capture via stdout/stderr inheritance instead
+            .arg("--host")
+            .arg("127.0.0.1")
+            .arg("--port")
+            .arg(port.to_string())
+            .arg("--model")
+            .arg(&gguf)
+            .arg("--ctx-size")
+            .arg("4096")
+            .arg("--threads")
+            .arg(num_threads().to_string())
+            .arg("--no-webui") // skip the bundled chat UI
+            .arg("--log-disable") // we capture via stdout/stderr inheritance instead
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .stdin(Stdio::null())
@@ -109,11 +122,17 @@ impl EmbeddedServer {
         loop {
             if started.elapsed() > STARTUP_TIMEOUT {
                 server.kill();
-                return Err(anyhow!("llama-server did not become ready within {}s", STARTUP_TIMEOUT.as_secs()));
+                return Err(anyhow!(
+                    "llama-server did not become ready within {}s",
+                    STARTUP_TIMEOUT.as_secs()
+                ));
             }
             if let Ok(r) = client.get(format!("{base_url}/health")).send().await {
                 if r.status().is_success() {
-                    log::info!("llama-server ready at {base_url} ({}ms)", started.elapsed().as_millis());
+                    log::info!(
+                        "llama-server ready at {base_url} ({}ms)",
+                        started.elapsed().as_millis()
+                    );
                     break;
                 }
             }
@@ -147,8 +166,14 @@ impl EmbeddedServer {
             .build()?;
         let body = ChatRequest {
             messages: vec![
-                ChatMessage { role: "system", content: system.to_string() },
-                ChatMessage { role: "user", content: user.to_string() },
+                ChatMessage {
+                    role: "system",
+                    content: system.to_string(),
+                },
+                ChatMessage {
+                    role: "user",
+                    content: user.to_string(),
+                },
             ],
             temperature: 0.2,
             max_tokens: 1024,
@@ -187,7 +212,9 @@ impl EmbeddedServer {
 }
 
 impl Drop for EmbeddedServer {
-    fn drop(&mut self) { self.kill(); }
+    fn drop(&mut self) {
+        self.kill();
+    }
 }
 
 #[derive(Serialize)]
