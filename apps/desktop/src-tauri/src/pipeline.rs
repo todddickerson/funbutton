@@ -1,4 +1,3 @@
-use crate::app_detect::FrontApp;
 use crate::cleanup::{self, Mode};
 use crate::cloud::{CleanupOutcome, CloudClient};
 use crate::groq;
@@ -52,24 +51,24 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
     let cloud = (!license_jwt.is_empty())
         .then(|| CloudClient::new(cloud_api_base.clone(), license_jwt.clone()));
 
-    // Mode is resolved BEFORE transcription so the on-device whisper can be
-    // biased with mode-appropriate vocabulary via its initial prompt.
-    let front = FrontApp::detect();
-    let frontmost = front.label();
+    // Frontmost-app detection runs on its own thread; its result is only
+    // *required* at cleanup time. The resolved mode also biases the STT
+    // vocabulary prompt, so auto mode grants detection a short bounded head
+    // start (DETECT_TIMEOUT, 400 ms) — never the unbounded osascript wait
+    // that stalled the pipeline ~105 s under a pending TCC prompt. Tradeoff:
+    // if detection misses that window, STT runs without the dev-vocabulary
+    // bias (Unknown → Auto) while the cleanup prompt still picks up a late
+    // result for free via `now_or_unknown`. With the native NSWorkspace
+    // path this is microseconds and the window effectively never misses.
+    let mut detect = crate::app_detect::DetectHandle::spawn();
     let mode = match mode_override {
-        ModeOverride::Auto => Mode::from_front_app(&front),
+        ModeOverride::Auto => {
+            Mode::from_front_app(&detect.wait_up_to(crate::app_detect::DETECT_TIMEOUT))
+        }
         ModeOverride::Code => Mode::Code,
         ModeOverride::Email => Mode::Email,
         ModeOverride::Slack => Mode::Slack,
         ModeOverride::Raw => Mode::Raw,
-    };
-    let mode_label = match mode {
-        Mode::Auto => "auto",
-        Mode::Code => "code",
-        Mode::Terminal => "terminal",
-        Mode::Email => "email",
-        Mode::Slack => "slack",
-        Mode::Raw => "raw",
     };
 
     *state.status.lock() = Status::Transcribing;
@@ -144,6 +143,25 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
         return Err(anyhow::anyhow!("no speech detected"));
     }
     *state.last_transcript.lock() = raw.clone();
+
+    // Detection may have finished while transcription ran — refine auto
+    // mode and take the app label for the receipt and history row. Still
+    // stalled? Unknown, instantly; the pipeline never waits here.
+    let front = detect.now_or_unknown();
+    let frontmost = front.label();
+    let mode = match mode_override {
+        ModeOverride::Auto => Mode::from_front_app(&front),
+        _ => mode,
+    };
+    let mode_label = match mode {
+        Mode::Auto => "auto",
+        Mode::Code => "code",
+        Mode::Terminal => "terminal",
+        Mode::Email => "email",
+        Mode::Slack => "slack",
+        Mode::Raw => "raw",
+    };
+
     let base_prompt = cleanup::system_prompt(mode);
     let mut prompt = base_prompt.to_string();
     if mode.is_dev() {

@@ -21,7 +21,6 @@ pub enum Backend {
     Embedded,
 }
 
-
 /// Which engine transcribes speech. On-device is the default — a fresh
 /// install dictates with zero API keys, fully offline. Groq is the optional
 /// faster/cloud path (needs a key).
@@ -36,7 +35,6 @@ pub enum SttBackend {
     Groq,
 }
 
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
@@ -48,7 +46,6 @@ pub enum ModeOverride {
     Slack,
     Raw,
 }
-
 
 /// Which key acts as push-to-talk.
 ///
@@ -67,7 +64,6 @@ pub enum HotkeyKind {
     Fn,
     RightOption,
 }
-
 
 impl HotkeyKind {
     pub fn as_u8(self) -> u8 {
