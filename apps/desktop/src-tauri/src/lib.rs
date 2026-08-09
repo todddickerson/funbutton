@@ -6,6 +6,7 @@ mod embedded_llm;
 mod embedded_stt;
 mod fn_hotkey;
 mod groq;
+mod guard;
 mod history;
 mod hotkey;
 mod inject;
@@ -35,7 +36,10 @@ struct StatusEvent {
 fn emit_status(app: &AppHandle, status: Status, message: Option<String>) {
     let _ = app.emit(
         "funbutton:status",
-        StatusEvent { status: status.label(), message },
+        StatusEvent {
+            status: status.label(),
+            message,
+        },
     );
 }
 
@@ -46,6 +50,9 @@ struct PipelinePayload {
     mode: String,
     backend: String,
     word_count: usize,
+    /// Reason string when the instruction-execution guard replaced the
+    /// model's output with the raw transcript; null on a normal cleanup.
+    guard: Option<&'static str>,
 }
 
 #[tauri::command]
@@ -107,14 +114,14 @@ fn simulate_hotkey(
     state: tauri::State<'_, AppStateHandle>,
     duration_ms: Option<u64>,
 ) -> Result<(), String> {
-    let tx = state
-        .hotkey_tx
-        .lock()
-        .clone();
-    let Some(tx) = tx else { return Err("no hotkey channel".into()); };
+    let tx = state.hotkey_tx.lock().clone();
+    let Some(tx) = tx else {
+        return Err("no hotkey channel".into());
+    };
     let dur = duration_ms.unwrap_or(1500);
     log::info!("simulate_hotkey: firing Down→(wait {dur}ms)→Up");
-    tx.send(hotkey::HotkeyEvent::Down).map_err(|e| e.to_string())?;
+    tx.send(hotkey::HotkeyEvent::Down)
+        .map_err(|e| e.to_string())?;
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(dur));
         let _ = tx.send(hotkey::HotkeyEvent::Up);
@@ -172,10 +179,7 @@ fn history_list(
 }
 
 #[tauri::command]
-fn history_copy(
-    state: tauri::State<'_, AppStateHandle>,
-    id: i64,
-) -> Result<(), String> {
+fn history_copy(state: tauri::State<'_, AppStateHandle>, id: i64) -> Result<(), String> {
     let entries = state
         .history
         .list(1000, None, None)
@@ -190,7 +194,10 @@ fn history_copy(
 #[tauri::command]
 fn history_purge_now(state: tauri::State<'_, AppStateHandle>) -> Result<u64, String> {
     let days = state.settings.lock().history_retention_days;
-    state.history.purge_older_than(days).map_err(|e| e.to_string())
+    state
+        .history
+        .purge_older_than(days)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -249,9 +256,15 @@ fn open_system_settings_panel(panel: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let url = match panel.as_str() {
-            "microphone" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
-            "accessibility" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-            "input_monitoring" => "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
+            "microphone" => {
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+            }
+            "accessibility" => {
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            }
+            "input_monitoring" => {
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+            }
             other => return Err(format!("unknown panel: {other}")),
         };
         std::process::Command::new("open")
@@ -400,7 +413,9 @@ fn load_settings() -> Settings {
                     Ok(()) => {
                         KEY_IN_KEYCHAIN.store(true, Ordering::SeqCst);
                         migrated = true;
-                        log::info!("migrated Groq API key from settings.json into the macOS Keychain");
+                        log::info!(
+                            "migrated Groq API key from settings.json into the macOS Keychain"
+                        );
                     }
                     Err(e) => {
                         log::warn!("keychain migration failed; key stays in settings.json: {e:#}");
@@ -469,8 +484,10 @@ pub fn run() {
         Err(e) => {
             log::error!("history db unavailable: {e:#}");
             // Fall back to an in-memory db so the rest of the app keeps running.
-            Arc::new(history::History::open(std::path::PathBuf::from(":memory:"))
-                .expect("in-memory sqlite"))
+            Arc::new(
+                history::History::open(std::path::PathBuf::from(":memory:"))
+                    .expect("in-memory sqlite"),
+            )
         }
     };
     // Apply retention purge on startup.
@@ -650,10 +667,7 @@ pub fn run() {
                         Err(e) => {
                             log::warn!("embedded llama-server failed to start: {e:#}");
                             *state_for_llm.embedded_error.lock() = Some(e.to_string());
-                            let _ = app_for_llm.emit(
-                                "funbutton:embedded-failed",
-                                e.to_string(),
-                            );
+                            let _ = app_for_llm.emit("funbutton:embedded-failed", e.to_string());
                             tray::sync(&app_for_llm);
                         }
                     }
@@ -815,12 +829,17 @@ fn handle_hotkey_loop(
                             *state_h.status.lock() = Status::Pasting;
                             // Surface the detected mode on the pill — makes
                             // the code-aware behavior visible ("pasting —
-                            // code mode · Cursor").
-                            emit_status(
-                                &app_h,
-                                Status::Pasting,
-                                Some(format!("{} mode · {}", r.mode, r.frontmost)),
-                            );
+                            // code mode · Cursor"). If the instruction-
+                            // execution guard fired, say so: the user is
+                            // getting their raw words, not the model's.
+                            let status_detail = match r.guard {
+                                Some(reason) => format!(
+                                    "{} mode · {} · guard: pasted raw transcript ({reason})",
+                                    r.mode, r.frontmost
+                                ),
+                                None => format!("{} mode · {}", r.mode, r.frontmost),
+                            };
+                            emit_status(&app_h, Status::Pasting, Some(status_detail));
                             let to_paste = r.cleaned.clone();
                             *state_h.last_cleaned.lock() = to_paste.clone();
                             let words = to_paste.split_whitespace().count();
@@ -905,6 +924,7 @@ fn handle_hotkey_loop(
                                     mode: r.mode.to_string(),
                                     backend: r.backend_used.to_string(),
                                     word_count: words,
+                                    guard: r.guard,
                                 },
                             );
                             *state_h.status.lock() = Status::Idle;

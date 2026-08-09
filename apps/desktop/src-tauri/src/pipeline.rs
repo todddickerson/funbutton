@@ -2,6 +2,7 @@ use crate::app_detect::FrontApp;
 use crate::cleanup::{self, Mode};
 use crate::cloud::{CleanupOutcome, CloudClient};
 use crate::groq;
+use crate::guard;
 use crate::ollama;
 use crate::state::{AppStateHandle, Backend, ModeOverride, Status, SttBackend};
 use std::sync::Arc;
@@ -13,8 +14,11 @@ pub struct PipelineResult {
     pub mode: &'static str,
     pub backend_used: &'static str,
     /// Frontmost app at dictation time — detected once here, reused for the
-    /// history row so we don't shell out to osascript twice.
+    /// history row so we don't detect twice.
     pub frontmost: String,
+    /// Set when the instruction-execution guard discarded the model's output
+    /// and `cleaned` is the raw transcript instead — carries the reason.
+    pub guard: Option<&'static str>,
 }
 
 pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<PipelineResult> {
@@ -93,10 +97,8 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
                 let stt = Arc::clone(&state.stt);
                 let wav_c = wav.clone();
                 let prompt = stt_prompt.clone();
-                let joined = tokio::task::spawn_blocking(move || {
-                    stt.transcribe_wav(&wav_c, prompt)
-                })
-                .await;
+                let joined =
+                    tokio::task::spawn_blocking(move || stt.transcribe_wav(&wav_c, prompt)).await;
                 (
                     "embedded-whisper",
                     joined.unwrap_or_else(|e| Err(anyhow::anyhow!("stt task join: {e}"))),
@@ -164,63 +166,52 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
 
     *state.status.lock() = Status::Cleaning;
 
-    // Cloud cleanup path: tries preferred premium model, silently falls back
-    // to fast tier on HTTP 402 (cap exceeded). Worker enforces caps + rate limit.
-    if let Some(cli) = &cloud {
-        // The worker's mode union is auto|email|slack|code|raw — the internal
-        // terminal mode rides the code prompt on the cloud path.
-        let cloud_mode = if mode == Mode::Terminal { "code" } else { mode_label };
-        match cli
-            .cleanup(&premium_model, &raw, cloud_mode, &dictionary)
-            .await
-        {
-            Ok(CleanupOutcome::Ok { text, .. }) => {
-                let cleaned = post_process(text);
-                return Ok(PipelineResult {
-                    raw,
-                    cleaned,
-                    mode: mode_label,
-                    backend_used: "cloud",
-                    frontmost,
-                });
-            }
-            Ok(CleanupOutcome::CapExceeded) => {
-                log::info!("cloud cap exceeded — falling back to fast tier on cloud");
-                if let Ok(CleanupOutcome::Ok { text, .. }) =
-                    cli.cleanup("fast", &raw, cloud_mode, &dictionary).await
-                {
-                    let cleaned = post_process(text);
-                    return Ok(PipelineResult {
-                        raw,
-                        cleaned,
-                        mode: mode_label,
-                        backend_used: "cloud-fallback",
-                        frontmost,
-                    });
-                }
-                log::warn!("cloud fast fallback failed; trying BYOK groq next");
-            }
-            Err(e) => {
-                log::warn!("cloud cleanup failed, falling back to BYOK groq: {e:#}");
-            }
-        }
-    }
-
-    // BYOK / local path. Fallback chain depends on user preference:
-    //   Embedded → try only the bundled llama.cpp.
-    //   Local    → try only user-installed Ollama.
-    //   Groq     → try only the cloud (BYOK key required).
-    //   Auto     → embedded (always available) → ollama-external → groq.
     let embedded = state.embedded.lock().clone();
 
-    let try_embedded = matches!(backend, Backend::Embedded | Backend::Auto)
-        && embedded.is_some();
-    let try_ollama = matches!(backend, Backend::Local | Backend::Auto)
-        && ollama::is_available(&ollama_url).await;
-    let try_groq = matches!(backend, Backend::Groq | Backend::Auto)
-        && !api_key.is_empty();
+    // Every backend's output funnels through the single post_process +
+    // instruction-execution-guard finalization after this block.
+    let (cleaned, used): (String, &'static str) = 'cleanup: {
+        // Cloud cleanup path: tries preferred premium model, silently falls back
+        // to fast tier on HTTP 402 (cap exceeded). Worker enforces caps + rate limit.
+        if let Some(cli) = &cloud {
+            // The worker's mode union is auto|email|slack|code|raw — the internal
+            // terminal mode rides the code prompt on the cloud path.
+            let cloud_mode = if mode == Mode::Terminal {
+                "code"
+            } else {
+                mode_label
+            };
+            match cli
+                .cleanup(&premium_model, &raw, cloud_mode, &dictionary)
+                .await
+            {
+                Ok(CleanupOutcome::Ok { text, .. }) => break 'cleanup (text, "cloud"),
+                Ok(CleanupOutcome::CapExceeded) => {
+                    log::info!("cloud cap exceeded — falling back to fast tier on cloud");
+                    if let Ok(CleanupOutcome::Ok { text, .. }) =
+                        cli.cleanup("fast", &raw, cloud_mode, &dictionary).await
+                    {
+                        break 'cleanup (text, "cloud-fallback");
+                    }
+                    log::warn!("cloud fast fallback failed; trying BYOK groq next");
+                }
+                Err(e) => {
+                    log::warn!("cloud cleanup failed, falling back to BYOK groq: {e:#}");
+                }
+            }
+        }
 
-    let (cleaned, used) = 'cleanup: {
+        // BYOK / local path. Fallback chain depends on user preference:
+        //   Embedded → try only the bundled llama.cpp.
+        //   Local    → try only user-installed Ollama.
+        //   Groq     → try only the cloud (BYOK key required).
+        //   Auto     → embedded (always available) → ollama-external → groq.
+        let try_embedded =
+            matches!(backend, Backend::Embedded | Backend::Auto) && embedded.is_some();
+        let try_ollama = matches!(backend, Backend::Local | Backend::Auto)
+            && ollama::is_available(&ollama_url).await;
+        let try_groq = matches!(backend, Backend::Groq | Backend::Auto) && !api_key.is_empty();
+
         if try_embedded {
             if let Some(srv) = &embedded {
                 match srv.generate(&prompt, &raw).await {
@@ -248,7 +239,28 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
     };
 
     let cleaned = post_process(cleaned);
-    Ok(PipelineResult { raw, cleaned, mode: mode_label, backend_used: used, frontmost })
+    // Runtime instruction-execution guard (defense in depth behind the
+    // prompts' prime directive): if the model answered or obeyed the
+    // dictation instead of cleaning it, its output is never pasted — the
+    // raw transcript is. Identical/near-identical output (including the
+    // raw-passthrough backend) never trips.
+    let (cleaned, guard) = match guard::detect_instruction_execution(&raw, &cleaned) {
+        Some(reason) => {
+            log::warn!(
+                "cleanup guard tripped ({reason}) on {used}; discarding model output {cleaned:?} — pasting raw transcript"
+            );
+            (raw.trim().to_string(), Some(reason))
+        }
+        None => (cleaned, None),
+    };
+    Ok(PipelineResult {
+        raw,
+        cleaned,
+        mode: mode_label,
+        backend_used: used,
+        frontmost,
+        guard,
+    })
 }
 
 /// Vocabulary bias for the on-device whisper: the user's dictionary, plus
