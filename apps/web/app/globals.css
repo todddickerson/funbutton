@@ -12,6 +12,10 @@
   --font-mono: var(--font-geist-mono);
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 html, body {
   background: var(--background);
   color: var(--foreground);
@@ -19,11 +23,12 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Pixelated red round button glyph */
-@keyframes fb-btn-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6), inset 0 -3px 0 rgba(0,0,0,0.35); }
-  50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0), inset 0 -3px 0 rgba(0,0,0,0.35); }
+::selection {
+  background: rgba(239, 68, 68, 0.9);
+  color: #0a0a0a;
 }
+
+/* Pixelated red round button glyph (brand mark — static) */
 .fb-glyph {
   width: 22px;
   height: 22px;
@@ -33,14 +38,74 @@ html, body {
     radial-gradient(circle at 30% 30%, #fca5a5 0%, #ef4444 35%, #b91c1c 100%);
   display: inline-block;
   image-rendering: pixelated;
-  animation: fb-btn-pulse 2.4s ease-in-out infinite;
-  box-shadow: inset 0 -3px 0 rgba(0,0,0,0.35);
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.35);
 }
 
 /* Subtle grid backdrop */
 .fb-grid {
   background-image:
-    linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px);
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
   background-size: 32px 32px;
+}
+
+/* Recording indicator — pulsing ring is justified: it means "mic is live" */
+@keyframes fb-rec-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55); }
+  50% { box-shadow: 0 0 0 5px rgba(239, 68, 68, 0); }
+}
+.fb-rec {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: #ef4444;
+  display: inline-block;
+  animation: fb-rec-pulse 1.4s ease-in-out infinite;
+}
+
+/* Terminal line entrance — one-shot stagger, delays set inline.
+   Animation is gated on .fb-demo-play, added by an IntersectionObserver when
+   #demo scrolls into view (with a noscript fallback showing the end state). */
+@keyframes fb-line-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fb-line {
+  opacity: 0;
+}
+.fb-demo-play .fb-line {
+  animation: fb-line-in 0.45s ease-out forwards;
+}
+
+/* Blinking block cursor at the end of typed output */
+@keyframes fb-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.fb-cursor::after {
+  content: "▍";
+  color: #ef4444;
+  animation: fb-blink 1.1s steps(1) infinite;
+}
+
+/* Keycap — physical key depth via inset edge, not glow */
+.fb-keycap {
+  border-radius: 8px;
+  border: 1px solid #333;
+  background: #171717;
+  box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.fb-keycap-fn {
+  border-color: #b91c1c;
+  background: #ef4444;
+  color: #0a0a0a;
+  box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .fb-rec { animation: none; }
+  .fb-line,
+  .fb-demo-play .fb-line { opacity: 1; animation: none; }
+  .fb-cursor::after { animation: none; }
 }

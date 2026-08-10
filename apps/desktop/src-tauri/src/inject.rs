@@ -7,8 +7,8 @@ use std::time::Duration;
 /// Outcome of a paste attempt.
 /// - `Pasted`: keystroke sent without error. Prior clipboard restored.
 /// - `Failed`: enigo errored, or clipboard write failed. Cleaned text is left
-///    on the clipboard so the user can recover by pressing Cmd+V manually
-///    (or by clicking a history entry).
+///   on the clipboard so the user can recover by pressing Cmd+V manually
+///   (or by clicking a history entry).
 pub enum PasteOutcome {
     Pasted,
     Failed(String),

@@ -8,8 +8,10 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum Backend {
     /// Try embedded → ollama-external → groq, in that order.
+    #[default]
     Auto,
     /// Force Groq cloud (fast tier or premium via license).
     Groq,
@@ -19,44 +21,30 @@ pub enum Backend {
     Embedded,
 }
 
-impl Default for Backend {
-    fn default() -> Self {
-        Backend::Auto
-    }
-}
-
 /// Which engine transcribes speech. On-device is the default — a fresh
 /// install dictates with zero API keys, fully offline. Groq is the optional
 /// faster/cloud path (needs a key).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum SttBackend {
     /// Bundled whisper base.en via transcribe-cpp (Metal). Default.
+    #[default]
     Local,
     /// Groq Whisper Turbo (cloud, BYOK) — or the licensed cloud proxy.
     Groq,
 }
 
-impl Default for SttBackend {
-    fn default() -> Self {
-        SttBackend::Local
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ModeOverride {
+    #[default]
     Auto,
     Code,
     Email,
     Slack,
     Raw,
-}
-
-impl Default for ModeOverride {
-    fn default() -> Self {
-        ModeOverride::Auto
-    }
 }
 
 /// Which key acts as push-to-talk.
@@ -70,15 +58,11 @@ impl Default for ModeOverride {
 ///   thread, so it's safe on macOS 26 (see `hotkey.rs`).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum HotkeyKind {
+    #[default]
     Fn,
     RightOption,
-}
-
-impl Default for HotkeyKind {
-    fn default() -> Self {
-        HotkeyKind::Fn
-    }
 }
 
 impl HotkeyKind {
@@ -151,12 +135,22 @@ fn default_cloud_api_base() -> String {
     // added to the Spontent CF account and a custom domain is attached.
     "https://funbutton-api.todd-e03.workers.dev".to_string()
 }
-fn default_premium_model() -> String { "premium-haiku".to_string() }
-fn default_retention_days() -> u32 { 30 }
+fn default_premium_model() -> String {
+    "premium-haiku".to_string()
+}
+fn default_retention_days() -> u32 {
+    30
+}
 
-fn default_ollama_model() -> String { "qwen2.5:1.5b".to_string() }
-fn default_ollama_url() -> String { "http://localhost:11434".to_string() }
-fn default_words_today() -> u64 { 0 }
+fn default_ollama_model() -> String {
+    "qwen2.5:1.5b".to_string()
+}
+fn default_ollama_url() -> String {
+    "http://localhost:11434".to_string()
+}
+fn default_words_today() -> u64 {
+    0
+}
 fn default_hotkey_label() -> String {
     "the Fun Button (Fn) — bottom-left of your keyboard".to_string()
 }

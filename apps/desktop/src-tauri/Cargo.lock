@@ -1404,6 +1404,7 @@ dependencies = [
  "hound",
  "keyring",
  "log",
+ "objc2-app-kit",
  "once_cell",
  "parking_lot",
  "reqwest",

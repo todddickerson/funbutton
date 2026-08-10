@@ -6,6 +6,7 @@ mod embedded_llm;
 mod embedded_stt;
 mod fn_hotkey;
 mod groq;
+mod guard;
 mod history;
 mod hotkey;
 mod inject;
@@ -13,6 +14,7 @@ mod keychain;
 mod ollama;
 mod pipeline;
 mod state;
+mod tray;
 
 use crate::audio::Recorder;
 use crate::hotkey::HotkeyEvent;
@@ -23,11 +25,7 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
-use tauri::{
-    menu::{Menu, MenuItem},
-    tray::{TrayIcon, TrayIconBuilder},
-    AppHandle, Emitter, Manager,
-};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Serialize, Clone)]
 struct StatusEvent {
@@ -38,7 +36,10 @@ struct StatusEvent {
 fn emit_status(app: &AppHandle, status: Status, message: Option<String>) {
     let _ = app.emit(
         "funbutton:status",
-        StatusEvent { status: status.label(), message },
+        StatusEvent {
+            status: status.label(),
+            message,
+        },
     );
 }
 
@@ -49,6 +50,9 @@ struct PipelinePayload {
     mode: String,
     backend: String,
     word_count: usize,
+    /// Reason string when the instruction-execution guard replaced the
+    /// model's output with the raw transcript; null on a normal cleanup.
+    guard: Option<&'static str>,
 }
 
 #[tauri::command]
@@ -58,6 +62,7 @@ fn get_settings(state: tauri::State<'_, AppStateHandle>) -> Settings {
 
 #[tauri::command]
 fn save_settings(
+    app: AppHandle,
     state: tauri::State<'_, AppStateHandle>,
     settings: Settings,
 ) -> Result<(), String> {
@@ -88,6 +93,8 @@ fn save_settings(
         .store(settings.hotkey_kind.as_u8(), Ordering::SeqCst);
     log::info!("settings saved; armed hotkey = {:?}", settings.hotkey_kind);
     *state.settings.lock() = settings;
+    // Mode / hotkey changes show up in the tray menu immediately.
+    tray::sync(&app);
     Ok(())
 }
 
@@ -107,14 +114,14 @@ fn simulate_hotkey(
     state: tauri::State<'_, AppStateHandle>,
     duration_ms: Option<u64>,
 ) -> Result<(), String> {
-    let tx = state
-        .hotkey_tx
-        .lock()
-        .clone();
-    let Some(tx) = tx else { return Err("no hotkey channel".into()); };
+    let tx = state.hotkey_tx.lock().clone();
+    let Some(tx) = tx else {
+        return Err("no hotkey channel".into());
+    };
     let dur = duration_ms.unwrap_or(1500);
     log::info!("simulate_hotkey: firing Down→(wait {dur}ms)→Up");
-    tx.send(hotkey::HotkeyEvent::Down).map_err(|e| e.to_string())?;
+    tx.send(hotkey::HotkeyEvent::Down)
+        .map_err(|e| e.to_string())?;
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(dur));
         let _ = tx.send(hotkey::HotkeyEvent::Up);
@@ -172,10 +179,7 @@ fn history_list(
 }
 
 #[tauri::command]
-fn history_copy(
-    state: tauri::State<'_, AppStateHandle>,
-    id: i64,
-) -> Result<(), String> {
+fn history_copy(state: tauri::State<'_, AppStateHandle>, id: i64) -> Result<(), String> {
     let entries = state
         .history
         .list(1000, None, None)
@@ -190,7 +194,10 @@ fn history_copy(
 #[tauri::command]
 fn history_purge_now(state: tauri::State<'_, AppStateHandle>) -> Result<u64, String> {
     let days = state.settings.lock().history_retention_days;
-    state.history.purge_older_than(days).map_err(|e| e.to_string())
+    state
+        .history
+        .purge_older_than(days)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -249,9 +256,15 @@ fn open_system_settings_panel(panel: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let url = match panel.as_str() {
-            "microphone" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
-            "accessibility" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-            "input_monitoring" => "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
+            "microphone" => {
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+            }
+            "accessibility" => {
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            }
+            "input_monitoring" => {
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+            }
             other => return Err(format!("unknown panel: {other}")),
         };
         std::process::Command::new("open")
@@ -400,7 +413,9 @@ fn load_settings() -> Settings {
                     Ok(()) => {
                         KEY_IN_KEYCHAIN.store(true, Ordering::SeqCst);
                         migrated = true;
-                        log::info!("migrated Groq API key from settings.json into the macOS Keychain");
+                        log::info!(
+                            "migrated Groq API key from settings.json into the macOS Keychain"
+                        );
                     }
                     Err(e) => {
                         log::warn!("keychain migration failed; key stays in settings.json: {e:#}");
@@ -441,7 +456,7 @@ fn load_settings() -> Settings {
     s
 }
 
-fn persist(s: &Settings) -> anyhow::Result<()> {
+pub(crate) fn persist(s: &Settings) -> anyhow::Result<()> {
     let p = settings_path();
     let mut on_disk = s.clone();
     if KEY_IN_KEYCHAIN.load(Ordering::SeqCst) {
@@ -469,8 +484,10 @@ pub fn run() {
         Err(e) => {
             log::error!("history db unavailable: {e:#}");
             // Fall back to an in-memory db so the rest of the app keeps running.
-            Arc::new(history::History::open(std::path::PathBuf::from(":memory:"))
-                .expect("in-memory sqlite"))
+            Arc::new(
+                history::History::open(std::path::PathBuf::from(":memory:"))
+                    .expect("in-memory sqlite"),
+            )
         }
     };
     // Apply retention purge on startup.
@@ -645,14 +662,13 @@ pub fn run() {
                             log::info!("embedded llama-server ready at {}", server.base_url());
                             *state_for_llm.embedded.lock() = Some(std::sync::Arc::new(server));
                             let _ = app_for_llm.emit("funbutton:embedded-ready", ());
+                            tray::sync(&app_for_llm);
                         }
                         Err(e) => {
                             log::warn!("embedded llama-server failed to start: {e:#}");
                             *state_for_llm.embedded_error.lock() = Some(e.to_string());
-                            let _ = app_for_llm.emit(
-                                "funbutton:embedded-failed",
-                                e.to_string(),
-                            );
+                            let _ = app_for_llm.emit("funbutton:embedded-failed", e.to_string());
+                            tray::sync(&app_for_llm);
                         }
                     }
                 });
@@ -682,43 +698,14 @@ pub fn run() {
                 }
             }
 
-            // System tray
-            let handle = app.handle().clone();
-            let open_item = MenuItem::with_id(&handle, "open", "Settings", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(&handle, "quit", "Quit FunButton", true, None::<&str>)?;
-            let menu = Menu::with_items(&handle, &[&open_item, &quit_item])?;
-            let tray: TrayIcon = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .icon_as_template(true)
-                .tooltip("FunButton — hold Fn to dictate · ⌘⇧V re-paste · ⌘⇧H history")
-                .menu(&menu)
-                .on_menu_event(move |app, event| match event.id().as_ref() {
-                    "open" => {
-                        if let Some(w) = app.get_webview_window("settings") {
-                            let _ = w.show();
-                            let _ = w.set_focus();
-                        }
-                    }
-                    "quit" => {
-                        // Drop native resources explicitly — process exit
-                        // skips Drop impls, which would orphan the
-                        // llama-server child and can SIGABRT ggml-metal in
-                        // C++ static destructors with a live Metal context.
-                        let st = app.state::<AppStateHandle>();
-                        if let Some(srv) = st.embedded.lock().take() {
-                            srv.kill();
-                        }
-                        st.stt.unload();
-                        app.exit(0);
-                    }
-                    _ => {}
-                })
-                .build(app)?;
+            // System tray — state-aware menu + recording indicator; all
+            // AppKit mutations routed through tray::sync (main thread).
+            tray::init(&app.handle().clone())?;
 
             // Spawn the hotkey-event handler thread.
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
-                handle_hotkey_loop(app_handle, app_state_clone, recorder_clone, rx, tray);
+                handle_hotkey_loop(app_handle, app_state_clone, recorder_clone, rx);
             });
 
             Ok(())
@@ -745,7 +732,6 @@ fn handle_hotkey_loop(
     state: AppStateHandle,
     recorder: Arc<PMutex<Recorder>>,
     rx: mpsc::Receiver<HotkeyEvent>,
-    tray: TrayIcon,
 ) {
     // Tokio runtime for async pipeline calls.
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -767,7 +753,9 @@ fn handle_hotkey_loop(
                 match rec.start() {
                     Ok(()) => {
                         *state.status.lock() = Status::Recording;
-                        let _ = tray.set_tooltip(Some("FunButton — recording"));
+                        // ● appears next to the menu-bar icon while the mic
+                        // is hot — recording is visible without any window.
+                        tray::sync(&app);
                         emit_status(&app, Status::Recording, None);
                         if let Some(p) = app.get_webview_window("pill") {
                             let _ = p.show();
@@ -776,6 +764,7 @@ fn handle_hotkey_loop(
                     Err(e) => {
                         log::error!("recorder start failed: {e:#}");
                         *state.status.lock() = Status::Error;
+                        tray::sync(&app);
                         emit_status(&app, Status::Error, Some(format!("audio: {e}")));
                     }
                 }
@@ -787,7 +776,7 @@ fn handle_hotkey_loop(
                         // Less than ~50ms at 48kHz stereo — likely an accidental tap.
                         let _ = rec.stop_and_encode_wav();
                         *state.status.lock() = Status::Idle;
-                        let _ = tray.set_tooltip(Some("FunButton — hold Fn to dictate"));
+                        tray::sync(&app);
                         if let Some(p) = app.get_webview_window("pill") {
                             let _ = p.hide();
                         }
@@ -800,6 +789,7 @@ fn handle_hotkey_loop(
                         Err(e) => {
                             log::error!("recorder stop failed: {e:#}");
                             *state.status.lock() = Status::Error;
+                            tray::sync(&app);
                             emit_status(&app, Status::Error, Some(format!("encode: {e}")));
                             continue;
                         }
@@ -825,9 +815,11 @@ fn handle_hotkey_loop(
 
                 let app_h = app.clone();
                 let state_h = Arc::clone(&state);
-                let tray_h = tray.clone();
                 rt.spawn(async move {
-                    let _ = tray_h.set_tooltip(Some("FunButton — transcribing"));
+                    // Pipeline sets Transcribing itself, but flip it here
+                    // first so the ● → … handoff in the menu bar is instant.
+                    *state_h.status.lock() = Status::Transcribing;
+                    tray::sync(&app_h);
                     let result = pipeline::run(Arc::clone(&state_h), wav).await;
                     if let Some(p) = app_h.get_webview_window("pill") {
                         let _ = p.hide();
@@ -837,12 +829,17 @@ fn handle_hotkey_loop(
                             *state_h.status.lock() = Status::Pasting;
                             // Surface the detected mode on the pill — makes
                             // the code-aware behavior visible ("pasting —
-                            // code mode · Cursor").
-                            emit_status(
-                                &app_h,
-                                Status::Pasting,
-                                Some(format!("{} mode · {}", r.mode, r.frontmost)),
-                            );
+                            // code mode · Cursor"). If the instruction-
+                            // execution guard fired, say so: the user is
+                            // getting their raw words, not the model's.
+                            let status_detail = match r.guard {
+                                Some(reason) => format!(
+                                    "{} mode · {} · guard: pasted raw transcript ({reason})",
+                                    r.mode, r.frontmost
+                                ),
+                                None => format!("{} mode · {}", r.mode, r.frontmost),
+                            };
+                            emit_status(&app_h, Status::Pasting, Some(status_detail));
                             let to_paste = r.cleaned.clone();
                             *state_h.last_cleaned.lock() = to_paste.clone();
                             let words = to_paste.split_whitespace().count();
@@ -850,8 +847,18 @@ fn handle_hotkey_loop(
                             // Insert history row BEFORE paste, so even if paste fails the
                             // cleaned text is preserved.
                             let frontmost = r.frontmost.clone();
+                            // Honest per-backend label — runtime QA caught a
+                            // fully-offline embedded run recorded as
+                            // "groq-…", which undercuts the local-only story.
                             let model_used = match r.backend_used {
-                                "local" => format!("ollama-{}", state_h.settings.lock().ollama_model),
+                                "embedded" => "embedded-qwen2.5-1.5b".to_string(),
+                                "ollama" | "local" => {
+                                    format!("ollama-{}", state_h.settings.lock().ollama_model)
+                                }
+                                "cloud" | "cloud-fallback" => {
+                                    format!("cloud-{}", state_h.settings.lock().premium_model)
+                                }
+                                "raw-passthrough" => "raw-passthrough".to_string(),
                                 _ => format!("groq-{}", crate::groq::LLAMA_MODEL),
                             };
                             let history_id = match state_h.history.insert_pre_paste(
@@ -927,16 +934,17 @@ fn handle_hotkey_loop(
                                     mode: r.mode.to_string(),
                                     backend: r.backend_used.to_string(),
                                     word_count: words,
+                                    guard: r.guard,
                                 },
                             );
                             *state_h.status.lock() = Status::Idle;
-                            let _ = tray_h.set_tooltip(Some("FunButton — hold Fn to dictate"));
+                            tray::sync(&app_h);
                             emit_status(&app_h, Status::Idle, None);
                         }
                         Err(e) => {
                             log::error!("pipeline failed: {e:#}");
                             *state_h.status.lock() = Status::Error;
-                            let _ = tray_h.set_tooltip(Some("FunButton — error"));
+                            tray::sync(&app_h);
                             emit_status(&app_h, Status::Error, Some(format!("{e:#}")));
                         }
                     }

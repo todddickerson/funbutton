@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "pill-window",
+  "description": "Pill HUD webview extras: bottom-center placement on the cursor's monitor at the start of every dictation, plus re-show/hide for the pasted/error flash (the Rust side hides the window before those statuses are emitted).",
+  "windows": ["pill"],
+  "permissions": [
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-position",
+    "core:window:allow-outer-size",
+    "core:window:allow-current-monitor",
+    "core:window:allow-primary-monitor",
+    "core:window:allow-cursor-position",
+    "core:window:allow-monitor-from-point"
+  ]
+}

@@ -99,8 +99,9 @@ pub fn spawn_listener(tx: Sender<HotkeyEvent>, armed: Arc<AtomicU8>) {
                         // clear). We track state unconditionally (like the Fn
                         // tap) so a hot-swap mid-press can't strand a stale
                         // edge; we only *emit* when Right Option is armed.
-                        let alt_now =
-                            event.get_flags().contains(CGEventFlags::CGEventFlagAlternate);
+                        let alt_now = event
+                            .get_flags()
+                            .contains(CGEventFlags::CGEventFlagAlternate);
                         let alt_was = held_cb.swap(alt_now, Ordering::SeqCst);
 
                         let armed_kind = HotkeyKind::from_u8(armed_cb.load(Ordering::SeqCst));

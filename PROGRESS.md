@@ -2,6 +2,40 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-08-08 23:55 — Gauntlet follow-up: injection guard + detection latency + first real runtime QA
+
+**Branch `gauntlet-followup-guard-latency` (off gauntlet-v2-polish). Findings #5 and #14 fixed, and the runtime QA pass that had never actually been done — done, on the real release binary with the real bundled models. PR into main open; no release cut.**
+
+**Done:**
+- **Finding #5 (security) — instruction-execution guard.** Every mode prompt (auto/email/slack/raw/code/terminal) now opens with a hardened prime directive (`with_prime_directive!` in cleanup.rs), ported verbatim to the premium worker prompts so paying users aren't less protected. Behind it, a runtime guard (`guard.rs`): five signals detect that the cleanup model answered/obeyed the dictation instead of cleaning it (empty output, assistant-voice openers, vanished instruction markers + low substring overlap, length explosion, question-came-back-as-answer) → raw transcript is pasted, never the model's output; reason logged, shown on the pill, carried in `funbutton:result`. All backends (embedded/ollama/groq/cloud) funnel through one guarded finalization. 13 unit tests pin trip/no-trip both ways; thresholds tuned so self-corrections, casing merges ("get user by id"→getUserById), and symbol conversions never false-positive.
+- **Proof on the real model:** new `#[ignore]`-gated `guard_stack_holds_on_live_model` drives the hardened prompts through a live llama-server running the shipped Qwen 2.5 1.5B. The bundled model obeyed 3 of 4 injections *despite* the hardened prompt (said literally `banana`; wrote an actual haiku; answered "what is two plus two") — guard caught all three, 4/4 paste the dictated sentence. The Q&A case was a guard gap found BY this probe and fixed (signal 5).
+- **Finding #14 (latency) — detection can't block the pipeline.** `FrontApp::detect()` (osascript, observed ~105s under TCC stall) replaced by native `NSWorkspace.frontmostApplication` via objc2-app-kit (already in the tree via Tauri — zero new crates; permission-free, µs-level). Detection runs concurrently on its own thread behind `DetectHandle`: auto mode waits ≤400ms for the STT-bias decision, cleanup picks up late results for free, stalled detection degrades to Unknown without ever holding the pipeline. Tradeoff documented in code: a missed 400ms window costs only the STT vocabulary bias for that dictation. osascript kept solely as fallback when native yields nothing.
+- **Runtime QA on a real install (RUNTIME-QA-2026-08-08.md).** Release `.app` built from this branch + 1.1GB DMG via the hdiutil workaround; release binary run headlessly twice (fresh HOME, selftest hotkey, `say`-synthesized WAVs): engines spawn (whisper on Metal 8.9s cold, llama-server 9.4s), whisper transcribes 395ms/69ms, pipeline end-to-end offline, **guard fired in the real app on the injection run** (Qwen output `"banana"` → raw sentence pasted), native detection live (history recorded `loginwindow` — screen was locked), no crash/panic in either run.
+- **Fixed along the way:** release link failure `___isPlatformVersionAtLeast` (ggml-metal @available vs Rust -nodefaultlibs, new with Xcode 17 — build.rs now links clang_rt.osx); history `model_used` claiming `groq-…` for fully-offline embedded runs (now honest per-backend labels); crate-wide `cargo fmt` + clippy 1.97 lints.
+- **Gates:** 43/43 lib tests green (+ 2 opt-in live probes) · cargo fmt + clippy clean · worker tsc clean · release build + bundle clean.
+
+**Next:** Todd: 30-second human pass per RUNTIME-QA §Human (fresh-account TCC grants, real speech, paste into Cursor, tray/pill visuals). Then merge the PR. Residual guard gaps documented: auxiliary-led questions ("is the build green"→"yes") and short claimed-execution outputs ("File deleted.") ride on the hardened prompt only.
+
+**Blocked:** none.
+
+## 2026-08-08 09:45 — GAUNTLET LOOP v2: polish pass across all six user-facing surfaces
+
+**Worker + blind-critic gauntlet (max 3 rounds/piece) on onboarding, settings, pill HUD, tray, dev-first engine, and the landing page. All six pieces converged to PASS; nothing passed round 1, so the bar did real work. Branch `gauntlet-v2-polish`, PR open for review — no release cut, no deploy.**
+
+**Done:**
+- Onboarding: grants animate as a circuit closing, live-poll made visible, engine-warmup staged as ignition, crafted keyboard hero, real end-to-end try-it step, denied/revoked recovery paths, Fn/emoji-picker collision fix surfaced.
+- Settings: single ENGINES status board, per-app mode map shown (incl. new terminal mode), dictionary chip editor, day-grouped history with paste-failure triage, instant-save interaction model, light+dark verified at 540x680.
+- Pill HUD: real-mic waveform (RMS via AnalyserNode), 340x96 bottom-center on the cursor's monitor, distinct state layers, "code mode · Cursor" receipt on paste, airtight mic/RAF teardown.
+- Tray: ● recording glyph in the menu bar, live status + engine telemetry with click-to-fix, mode quick-switch, copy-last, start-at-login, replay onboarding; all AppKit mutations routed through run_on_main_thread.
+- Dev-first engine (the wedge): curated two-tier DEV_DICTIONARY with whisper 224-token budget handling, CODE_PROMPT covering spoken flags/paths/versions/git conventions, new auto-detected TERMINAL mode (literal commands, never prose), Groq BYOK STT now gets vocabulary bias, 23 unit tests green.
+- Landing: real project page — dev-first hero, animated terminal demo, honest comparison table (Wispr/Handy/VoiceInk), install + pricing preserved, OG image, all prior slop violations (glow shadows, 14px input) killed.
+- Gates: cargo check/build --release clean · 23/23 lib tests · keyless offline STT proof passes ("Refactor the auth middleware and open a pull request.") · rdev/TIS grep clean · desktop tsc+vite + web next build+eslint clean.
+- GAUNTLET-ROUNDS.md (auditable PASS/FAIL log) + GAUNTLET-FINDINGS.md (~200 deduped findings, top-14 curated) at repo root.
+
+**Next:** Todd reviews PR; top findings queue: real product visual on landing, deep-context cleanup, editable per-app mode rules, premium-cloud dev parity.
+
+**Blocked:** none.
+
 ## 2026-08-02 11:11 — v0.1.4: macOS 26 crash fix (SIGTRAP on keypress during setup)
 
 **Tester on M4 / macOS 26.6 couldn't get through onboarding — app SIGTRAP'd ~15s in, the moment a key event arrived. Root cause + fix shipped.**
