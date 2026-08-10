@@ -1,10 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { APP_VERSION } from "./version";
 
-const DMG_URL =
-  "https://github.com/todddickerson/funbutton/releases/latest/download/FunButton_0.1.4_aarch64.dmg";
-const RELEASE_URL = "https://github.com/todddickerson/funbutton/releases/tag/v0.1.4";
+// The download CTA points at our own version-agnostic /download route, which
+// resolves the current release's macOS arm64 .dmg at request time (see
+// app/download/route.ts). This intentionally carries no version and no asset
+// filename so a new release never breaks the primary CTA (finding #12).
+const DMG_URL = "/download";
+// `releases/latest` always redirects to the newest release page — never 404s.
+const RELEASE_URL = "https://github.com/todddickerson/funbutton/releases/latest";
 const REPO_URL = "https://github.com/todddickerson/funbutton";
 
 export default function Home() {
@@ -45,7 +50,7 @@ function Nav() {
         <a href="#" className="flex items-center gap-2 font-mono text-xs text-neutral-300">
           <span className="fb-glyph" aria-hidden />
           <span className="font-bold text-neutral-100">FunButton</span>
-          <span className="hidden sm:inline text-neutral-600">v0.1.4-alpha</span>
+          <span className="hidden sm:inline text-neutral-600">v{APP_VERSION}-alpha</span>
         </a>
         <div className="flex items-center gap-5 font-mono text-xs">
           <a href="#how" className="hidden sm:inline text-neutral-500 hover:text-red-400 transition">
@@ -136,7 +141,7 @@ function Hero() {
           rel="noopener noreferrer"
           className="font-mono text-xs text-neutral-500 hover:text-red-400 transition underline underline-offset-4 decoration-neutral-700"
         >
-          v0.1.4 release notes →
+          v{APP_VERSION} release notes →
         </a>
       </div>
 
