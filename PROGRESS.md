@@ -2,6 +2,24 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-08-10 12:30 — Shipped v0.1.5: first public release of the gauntlet polish + security guard
+
+**The six-surface Gauntlet v2 polish AND the security-guard / non-blocking-detection follow-up (both on `main` since 08-08 but never released) are now the public v0.1.5 release. Also fixed the release-blocking landing bug (finding #12). Worked on branch `ship-v0.1.5`, PR #3 merged to main. Release cut. Landing deploy BLOCKED on Vercel creds — details below.**
+
+**Release:** https://github.com/todddickerson/funbutton/releases/tag/v0.1.5 — `FunButton_0.1.5_aarch64.dmg` (1.1 GB, bundled Whisper + Qwen inside the .app). arm64-only, unsigned, GPLv3.
+
+**Done:**
+- **Finding #12 (release-blocking) fixed.** The landing CTA hard-pinned `FunButton_0.1.4_aarch64.dmg` at a `releases/latest/download/` URL — that 404s the instant a release renames the asset (verified: the old URL went 404 the moment v0.1.5 published). Replaced with a version-agnostic `/download` route handler that resolves the current release's arm64 `.dmg` from the GitHub API at request time (302, falls back to the releases page on error) and prefers the tag-versioned asset. Version label centralized in `apps/web/app/version.ts`. No hardcoded `0.1.x` DMG filename remains anywhere in `apps/web`.
+- **Version bump** 0.1.4 → 0.1.5 (`Cargo.toml` + `tauri.conf.json` + `Cargo.lock`).
+- **All gates green on the real build** (see `RUNTIME-QA-v0.1.5.md`): 43/43 lib tests (+2 opt-in live probes) · fmt + clippy clean (0 warnings) · worker + web tsc + eslint clean · keyless offline STT proof (`"Refactor the auth middleware and open a pull request."`) · R1 linker fix holds · macOS-26 crash-API regression grep clean (doc comments only) · **live-model guard 4/4 injections caught** against the bundled Qwen.
+- **Real install QA.** Built the `.app` (v0.1.5, models inside `Contents/Resources/vendor/`), produced the DMG via the Sequoia `hdiutil convert` workaround, installed over the stale `/Applications` v0.1.3, xattr-cleared, and ran the installed binary offline (fresh HOME, no Groq key): whisper on Metal 85 ms, llama-server ready 8.8 s, both Fn + Right-Option taps installed, full offline pipeline, **honest `embedded-qwen2.5-1.5b` history row**, no crash/panic through 65 s (incl. the synthetic-hotkey keypress path that SIGTRAP'd on macOS 26).
+- **Hardened `update-landing-version.sh`** — fixed three real bugs found by running it for real: (1) `git diff --quiet` false-positived on sed's mtime touch and, via a failing `git commit` under `set -e`, aborted before deploy; (2) `source ~/clawd/.env` under `set -u` aborted on an unbound-var line; (3) it now reaches and runs the prod deploy with live verification. Script is correct end-to-end — it now fails only at the Vercel auth wall below.
+
+**Blocked:**
+- **funbutton.ai landing deploy — Vercel credentials.** The only `VERCEL_TOKEN` in `~/clawd/.env` belongs to Vercel user `yshmarov` / team "Bootstrapped", which does **not** own the live funbutton.ai project (that's under org `team_WGP9MIPM09U2lDW7YDqVIDsK`, per the checked-in `apps/web/.vercel/project.json`). `vercel --prod` fails with "Could not retrieve Project Settings"; there is no Git auto-deploy (site cache age ~8 days, unchanged after the push to main). So the site is still serving the **old v0.1.4 build**. **Todd (human):** deploy with a token that can access `team_WGP9…` — `cd apps/web && vercel --prod --yes --token <that account's token>`, or run `scripts/update-landing-version.sh` with `VERCEL_TOKEN` set to it. The script is fixed and will deploy + verify once it has the right token.
+  - **Bridge already in place:** because publishing v0.1.5 renamed the asset, the currently-live v0.1.4 CTA would 404. I attached a compat-named copy `FunButton_0.1.4_aarch64.dmg` to the v0.1.5 release, so the live site's hard-coded URL resolves (HTTP 200) until the new landing deploys. **Remove that compat asset after the redeploy** — the new `/download` route makes it unnecessary.
+- **Human QA items** (unchanged, in `RUNTIME-QA-v0.1.5.md` §Human): fresh-account TCC grants, real speech, paste into a focused app, a real keystroke through the tap, and tray/pill/onboarding visuals.
+
 ## 2026-08-08 23:55 — Gauntlet follow-up: injection guard + detection latency + first real runtime QA
 
 **Branch `gauntlet-followup-guard-latency` (off gauntlet-v2-polish). Findings #5 and #14 fixed, and the runtime QA pass that had never actually been done — done, on the real release binary with the real bundled models. PR into main open; no release cut.**
