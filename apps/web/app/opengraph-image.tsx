@@ -1,4 +1,5 @@
 import { ImageResponse } from "next/og";
+import { APP_VERSION } from "./version";
 
 export const alt =
   "FunButton — the dictation button for developers. No API key. Ever.";
@@ -41,7 +42,7 @@ export default function OpengraphImage() {
             FunButton
           </div>
           <div style={{ display: "flex", fontSize: 22, color: "#525252" }}>
-            v0.1.4-alpha
+            v{APP_VERSION}-alpha
           </div>
         </div>
 
