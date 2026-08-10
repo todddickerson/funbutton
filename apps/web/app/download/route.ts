@@ -20,13 +20,21 @@ const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`;
 
 function pickDmg(
   assets: { name: string; browser_download_url: string }[],
+  tag?: string,
 ): string | undefined {
   const dmgs = assets.filter((a) => a.name.toLowerCase().endsWith(".dmg"));
   if (dmgs.length === 0) return undefined;
   // Prefer the Apple Silicon build if the release carries more than one .dmg.
-  const arm =
-    dmgs.find((a) => /aarch64|arm64/i.test(a.name)) ?? dmgs[0];
-  return arm.browser_download_url;
+  const arm = dmgs.filter((a) => /aarch64|arm64/i.test(a.name));
+  const pool = arm.length > 0 ? arm : dmgs;
+  // If more than one candidate remains (e.g. a legacy-named compat asset lives
+  // alongside the current one), prefer the file whose name carries the
+  // release's version, so /download always serves the correctly-named build.
+  const version = (tag ?? "").replace(/^v/, "");
+  const versioned = version
+    ? pool.find((a) => a.name.includes(version))
+    : undefined;
+  return (versioned ?? pool[0]).browser_download_url;
 }
 
 export async function GET() {
@@ -46,9 +54,10 @@ export async function GET() {
     );
     if (res.ok) {
       const data = (await res.json()) as {
+        tag_name?: string;
         assets?: { name: string; browser_download_url: string }[];
       };
-      const url = pickDmg(data.assets ?? []);
+      const url = pickDmg(data.assets ?? [], data.tag_name);
       if (url) {
         return NextResponse.redirect(url, 302);
       }
