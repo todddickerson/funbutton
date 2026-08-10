@@ -57,7 +57,14 @@ else
 fi
 
 # 5. Deploy to prod — ALWAYS, regardless of whether step 4 committed anything.
-source "$HOME/clawd/.env" 2>/dev/null || true
+# Read ONLY the token line from the dotenv rather than `source`-ing the whole
+# file: sourcing runs every line in this shell, and under `set -u` any line that
+# references an unbound variable aborts the script (a nounset expansion error is
+# NOT rescued by `|| true`). Grepping one line has no such side effects.
+if [ -z "${VERCEL_TOKEN:-}" ] && [ -f "$HOME/clawd/.env" ]; then
+  VERCEL_TOKEN=$(grep -E '^VERCEL_TOKEN=' "$HOME/clawd/.env" | head -1 \
+    | sed -E 's/^VERCEL_TOKEN=//; s/^"//; s/"$//; s/^'\''//; s/'\''$//')
+fi
 if [ -z "${VERCEL_TOKEN:-}" ]; then
   echo "!! VERCEL_TOKEN not set (looked in \$HOME/clawd/.env) — cannot deploy" >&2
   exit 1
