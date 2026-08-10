@@ -40,14 +40,20 @@ echo "version.ts -> $(grep -oE 'APP_VERSION = \"[0-9.]+\"' "$VERSION_FILE")"
 
 # 4. Commit + push only if something actually changed (a no-op on a fresh ship
 #    where the branch already carries the bumped version).
-if ! git diff --quiet -- "$VERSION_FILE" "$PAGE"; then
+# Stage first, then compare the INDEX against HEAD. `sed -i` rewrites the file
+# (new mtime/inode) even when the content is unchanged, which makes a bare
+# `git diff --quiet` report a false "dirty" on stat alone — that sent us into
+# the commit branch, and `git commit` finding nothing to commit exits non-zero,
+# which under `set -e` aborted the script BEFORE the deploy ever ran. Staging
+# normalizes on content, so `git diff --cached --quiet` is a true no-op check.
+git add "$VERSION_FILE" "$PAGE"
+if git diff --cached --quiet; then
+  echo "landing already at $BARE — no commit needed"
+else
   BRANCH=$(git rev-parse --abbrev-ref HEAD)
-  git add "$VERSION_FILE" "$PAGE"
   git commit -q -m "chore(web): funbutton.ai -> $LATEST alpha"
   git push -q origin "$BRANCH"
   echo "committed + pushed landing version bump to $BRANCH"
-else
-  echo "landing already at $BARE — no commit needed"
 fi
 
 # 5. Deploy to prod — ALWAYS, regardless of whether step 4 committed anything.
