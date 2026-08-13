@@ -61,19 +61,33 @@ fi
 # file: sourcing runs every line in this shell, and under `set -u` any line that
 # references an unbound variable aborts the script (a nounset expansion error is
 # NOT rescued by `|| true`). Grepping one line has no such side effects.
+# TOKEN SCOPE MATTERS (burned 2026-08-10..13, cost 3 days of a stale site):
+# `VERCEL_TOKEN` is scoped to the `bootstrapped-cf259a39` team, which owns a
+# DIFFERENT funbutton project (funbutton.vercel.app only). funbutton.ai lives
+# under team_WGP9MIPM09U2lDW7YDqVIDsK (`todddickerson`), which that token cannot
+# see — the deploy fails with "Could not retrieve Project Settings", which reads
+# like a broken link but is really a scope error. `VERCEL_TOKEN_TODD` can see it.
+# So: prefer VERCEL_TOKEN_TODD, and always pass --scope explicitly.
+VERCEL_SCOPE="${VERCEL_SCOPE:-team_WGP9MIPM09U2lDW7YDqVIDsK}"
+if [ -z "${VERCEL_TOKEN_TODD:-}" ] && [ -f "$HOME/clawd/.env" ]; then
+  VERCEL_TOKEN_TODD=$(grep -E '^VERCEL_TOKEN_TODD=' "$HOME/clawd/.env" | head -1 \
+    | sed -E 's/^VERCEL_TOKEN_TODD=//; s/^"//; s/"$//; s/^'\''//; s/'\''$//')
+fi
 if [ -z "${VERCEL_TOKEN:-}" ] && [ -f "$HOME/clawd/.env" ]; then
   VERCEL_TOKEN=$(grep -E '^VERCEL_TOKEN=' "$HOME/clawd/.env" | head -1 \
     | sed -E 's/^VERCEL_TOKEN=//; s/^"//; s/"$//; s/^'\''//; s/'\''$//')
 fi
-if [ -z "${VERCEL_TOKEN:-}" ]; then
-  echo "!! VERCEL_TOKEN not set (looked in \$HOME/clawd/.env) — cannot deploy" >&2
+# VERCEL_TOKEN_TODD wins — it is the only one that can reach funbutton.ai.
+DEPLOY_TOKEN="${VERCEL_TOKEN_TODD:-${VERCEL_TOKEN:-}}"
+if [ -z "$DEPLOY_TOKEN" ]; then
+  echo "!! No Vercel token (looked for VERCEL_TOKEN_TODD then VERCEL_TOKEN in \$HOME/clawd/.env) — cannot deploy" >&2
   exit 1
 fi
 VERCEL_BIN="vercel"
 command -v vercel >/dev/null 2>&1 || VERCEL_BIN="npx --yes vercel"
 echo "deploying apps/web to prod via: $VERCEL_BIN"
 VLOG=$(mktemp)
-if ! ( cd "$WEB" && $VERCEL_BIN --prod --yes --token "$VERCEL_TOKEN" ) >"$VLOG" 2>&1; then
+if ! ( cd "$WEB" && $VERCEL_BIN --prod --yes --token "$DEPLOY_TOKEN" --scope "$VERCEL_SCOPE" ) >"$VLOG" 2>&1; then
   echo "!! vercel deploy FAILED:" >&2
   cat "$VLOG" >&2
   exit 1
