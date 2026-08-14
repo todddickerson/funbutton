@@ -2,6 +2,33 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-08-14 13:30 — Real hotkey picker + visual keyboard, widened key set (branch `feat-hotkey-picker`)
+
+**Fixes the brand's weakest point: "the bottom-left key IS the Fun Button" is FALSE on the Magic Keyboard with Numeric Keypad (bottom-left is Control) — exactly what stumped Todd on the Mac Studio. Now the app detects the keyboard, draws its real bottom row, and lets you pick ANY modifier by click or by pressing it. Branch `feat-hotkey-picker`, PR opened, no release cut.**
+
+**Done:**
+- **Keyboard detection (`keyboard.rs` + `detect_keyboard` command).** IOKit HID registry via `ioreg` (fast, primary), `system_profiler SPUSBDataType` fallback, generic fallback that NEVER hard-fails. Classifies built-in MacBook / compact Magic (Fn bottom-left) vs Magic-with-Numeric-Keypad / full-size (Control bottom-left) vs unknown. No layout/input-source APIs (macOS-26-safe). 9 unit tests.
+- **Widened `HotkeyKind`** from `fn | right_option` to 8: Fn, Right/Left Option, Right/Left Control, Right/Left Command, Caps Lock. Fn=0/RightOption=1 pinned for the armed-atomic; the rest appended.
+- **Generalized the keycode listener (`hotkey.rs`).** One CGEventTap now serves every keycode-based modifier; the armed kind is read per event. Left/right disambiguated by the device-specific `NX_DEVICE*KEYMASK` flag bits (what Karabiner/Hyperkey read), with a device-independent-flag fallback so a board that doesn't report device bits still registers. Flags + keycode ONLY — regression grep clean (comments only). Hot-swap preserved via the existing shared `armed` AtomicU8.
+- **"Press the key you want" capture.** `capture_hotkey`/`cancel_hotkey_capture` arm both taps to report the first modifier keydown (Fn included), emit `funbutton:hotkey-captured`, never touch the dictation pipeline.
+- **Visual picker (`HotkeyPicker.tsx` + `hotkeys.ts`).** Renders the detected bottom row — on the extended board the bottom-left renders **Control, not Fn** — clickable keys highlight/persist, Fn+Caps offered as extra chips, plus press-to-capture. Reused in onboarding (new "Pick your button" step 5, replacing the buried "use Right Option" link) and Settings (replaced the 2-pill picker). Theme-aware (tokens + dark fallbacks).
+- **Fixed the hardcoded-"fn" copy bug** Todd hit: hoisted ONE label from the single source (`hotkeys.ts` / `HotkeyKind::label`) and swept every user-facing "fn"/"Right Option" string in onboarding.tsx, App.tsx, tray.rs. Also corrected stale copy that claimed Right Option needs only Accessibility (all keycode taps need Input Monitoring).
+- **Brand copy:** keeps "Fn IS the Fun Button" where it applies (MacBook/compact) but never asserts it on boards without an Fn bottom-left; extended boards lead with Right Option as the detected default.
+
+**Gates (real results):**
+- `cargo build --release` clean (2m59s) · `cargo test --release --lib` **57 passed / 0 failed** (incl. new device-bit + keyboard tests) · frontend `tsc --noEmit` clean · `vite build` clean.
+- Keyless offline STT proof (GROQ_API_KEY unset): transcribed `"Refactor the auth middleware and open a pull request."`
+- macOS-26 regression grep: 4 matches, ALL comments/docs — no `rdev`/`TISCopy`/`UCKeyTranslate`/`TSMGetInputSource` as code.
+- **Real detection on THIS Mac Studio:** `detect_on_this_machine` (ignored) →
+  `model="Magic Keyboard with Touch ID and Numeric Keypad", layout=MagicExtended, fn_bottom_left=false, default_hotkey="right_option", vid=1452, pid=671, source="ioreg"`. Diagram bottom-left = Control. ✅
+- **Listener runtime:** `listener_maps_injected_cgevents` (ignored) spawns the REAL taps — both install with **Input Monitoring granted** (`"modifier-key tap installed"`, `"Fn key tap installed"`). Injected FlagsChanged events were dropped because this automation context has Input Monitoring but **not** Accessibility (`AXIsProcessTrusted=false`), and HID-tap injection is privileged regardless — so the literal physical hold/release DOWN/UP log capture is the one thing I can't do headless.
+
+**Needs a human (30s):** run `scripts/verify-hotkeys.sh` — launches the installed app with `RUST_LOG=info`, hold Fn / Right Option / Right Control in turn, confirm exactly one `hotkey: <Kind> DOWN`/`UP` per hold for the armed key and silence for the others. (Right Control has no physical key on this extended board; use the built-in path or a board that has one.) Deterministic DOWN/UP-vs-non-interference logic is already pinned by the passing lib tests.
+
+**Next:** Todd reviews the PR + runs the 30s physical check. No release, no landing deploy, no Telegram — per instructions.
+
+**Blocked:** none (Accessibility-in-automation is an environment limit, not a code issue).
+
 ## 2026-08-14 12:10 — Fixed the crash-on-EVERY-quit (SIGABRT) + the wrong-hotkey onboarding copy
 
 **Branch `fix-quit-crash` (off `main`). Two independent correctness bugs, both proven fixed on a real `/Applications` install of a fresh release build. No release cut, no landing deploy, no comms — Todd handles those. PR into `main` open.**

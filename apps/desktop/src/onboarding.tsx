@@ -5,8 +5,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ClipboardPaste, Keyboard as KeyboardIcon, Lock, Mic, Zap } from "lucide-react";
 import "./onboarding.css";
+import { HotkeyPicker } from "./HotkeyPicker";
+import { hotkeyHold, type HotkeyKind } from "./hotkeys";
 
-type HotkeyKind = "fn" | "right_option";
 type Backend = "auto" | "groq" | "local";
 type EngineStatus = "starting" | "ready" | "failed";
 interface EmbeddedStatus { cleanup: EngineStatus; stt: EngineStatus }
@@ -25,7 +26,7 @@ interface Settings {
 
 type PermState = "unknown" | "granted" | "denied" | "checking";
 
-const STEP_NAMES = ["hello", "switches", "mic", "paste", "fn key", "engines", "go"];
+const STEP_NAMES = ["hello", "switches", "mic", "paste", "your key", "engines", "go"];
 
 function App() {
   const [step, setStep] = useState(1);
@@ -104,10 +105,8 @@ function App() {
       const t = setTimeout(() => goto(5), 600);
       return () => clearTimeout(t);
     }
-    if (step === 5 && imPerm === "granted") {
-      const t = setTimeout(() => goto(6), 600);
-      return () => clearTimeout(t);
-    }
+    // Step 5 (pick-your-button) intentionally does NOT auto-advance on the
+    // Input Monitoring grant — the user still has to choose their key.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [micPerm, accPerm, imPerm, step]);
 
@@ -266,20 +265,13 @@ function App() {
           />
         )}
         {step === 5 && (
-          <PermSlide
-            title="Input Monitoring"
-            why="Fn isn't a normal key. macOS only tells apps about it once this switch is flipped."
-            icon={<KeyboardIcon size={24} />}
-            settingsPath="Privacy & Security → Input Monitoring"
-            state={imPerm}
-            onRequest={() => requestPerm("im")}
-            onOpen={() => openSysPanel("input_monitoring")}
+          <HotkeyStep
+            hotkeyKind={hotkeyKind}
+            onPick={pickHotkey}
+            imState={imPerm}
+            onRequestIM={() => requestPerm("im")}
+            onOpenIM={() => openSysPanel("input_monitoring")}
             onContinue={() => goto(6)}
-            tertiary={
-              <button className="ob-tertiary" onClick={async () => { await pickHotkey("right_option"); goto(6); }}>
-                Hate this one? Use Right Option as the hotkey instead →
-              </button>
-            }
           />
         )}
         {step === 6 && (
@@ -386,7 +378,7 @@ function Step2({
         <span className={`ob-wire ${mic === "granted" ? "on" : ""}`} aria-hidden="true" />
         <PermCard title="Accessibility" why="How the text lands at your cursor." state={acc} icon={<ClipboardPaste size={13} />} />
         <span className={`ob-wire ${acc === "granted" ? "on" : ""}`} aria-hidden="true" />
-        <PermCard title="Input Monitoring" why="Fn is special. macOS hides it from everyone else." state={im} icon={<KeyboardIcon size={13} />} />
+        <PermCard title="Input Monitoring" why="So we hear your button. macOS gates key presses behind this switch." state={im} icon={<KeyboardIcon size={13} />} />
       </div>
       <LiveScan label="watching System Settings live" />
       <div className="ob-cta-row tight">
@@ -481,6 +473,66 @@ function PermSlide({
           {tertiary}
         </div>
       )}
+    </section>
+  );
+}
+
+/**
+ * Pick-your-button step. The brand says the bottom-left key is the Fun Button —
+ * true on MacBooks and compact Magic Keyboards, false on full-size boards where
+ * it's Control. The picker detects the real keyboard and lets the user choose
+ * (click the diagram or just press the key). Input Monitoring lives here too,
+ * because whatever key they pick is dead without it.
+ */
+function HotkeyStep({
+  hotkeyKind, onPick, imState, onRequestIM, onOpenIM, onContinue,
+}: {
+  hotkeyKind: HotkeyKind;
+  onPick: (kind: HotkeyKind) => void;
+  imState: PermState;
+  onRequestIM: () => void;
+  onOpenIM: () => void;
+  onContinue: () => void;
+}) {
+  // Nudge the Input Monitoring prompt once on mount — nothing fires without it.
+  const requestedRef = useRef(false);
+  useEffect(() => {
+    if (!requestedRef.current && imState !== "granted") {
+      requestedRef.current = true;
+      onRequestIM();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <section className="ob-slide compact go">
+      <h1 className="ob-h1 small">Pick your button.</h1>
+      <p className="ob-sub small">
+        One key, held down, dictates anywhere. We looked at your keyboard — tap the
+        key you want, or just press it.
+      </p>
+
+      <HotkeyPicker selected={hotkeyKind} onPick={onPick} variant="onboarding" />
+
+      <div className={`ob-im ${imState}`}>
+        {imState === "granted" ? (
+          <span className="ob-im-ok"><CheckRing size={16} /> Input Monitoring is on — your key is live.</span>
+        ) : (
+          <>
+            <span className="ob-im-text">
+              macOS only reveals key presses once <strong>Input Monitoring</strong> is
+              on. Grant it and your key arms within seconds — no restart.
+            </span>
+            <button className="ob-btn ghost" onClick={onOpenIM}>Open Settings</button>
+          </>
+        )}
+      </div>
+
+      <div className="ob-cta-row tight">
+        <button className="ob-btn primary" onClick={onContinue}>
+          {imState === "granted" ? "That's my button →" : "Continue →"}
+        </button>
+      </div>
     </section>
   );
 }
@@ -604,9 +656,10 @@ function backendLabel(b: string): string {
 
 function Step7({ onFinish, hotkeyKind }: { onFinish: () => void; hotkeyKind: HotkeyKind }) {
   // Single source of truth for the armed key in every user-facing string in
-  // this step. Hardcoding "fn" here told Right Option users to hold the wrong
-  // key, so nothing below may name a key except through this.
-  const keyLabel = hotkeyKind === "fn" ? "fn" : "right option";
+  // this step. Hardcoding "fn" here told non-Fn users to hold the wrong key,
+  // so nothing below may name a key except through this. Sourced from
+  // hotkeyHold() so it stays correct across the full widened key set.
+  const keyLabel = hotkeyHold(hotkeyKind);
   const [waveform, setWaveform] = useState<number[]>(new Array(16).fill(0));
   const audioRef = useRef<{ ctx: AudioContext; analyser: AnalyserNode; data: Uint8Array; stream: MediaStream } | null>(null);
   const padRef = useRef<HTMLTextAreaElement | null>(null);
@@ -696,7 +749,7 @@ function Step7({ onFinish, hotkeyKind }: { onFinish: () => void; hotkeyKind: Hot
       alive = false;
       subs.forEach((p) => p.then((un) => { if (un) un(); }));
     };
-  }, []);
+  }, [keyLabel]);
 
   const peak = useMemo(() => waveform.reduce((m, v) => Math.max(m, v), 0), [waveform]);
   const isLive = peak > 0.04;

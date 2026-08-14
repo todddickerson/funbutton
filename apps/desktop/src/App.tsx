@@ -3,11 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { AlertTriangle, ChevronRight } from "lucide-react";
 import "./App.css";
+import { HotkeyPicker } from "./HotkeyPicker";
+import { hotkeyHold, hotkeyName, hotkeyShort, type HotkeyKind } from "./hotkeys";
 
 type Backend = "auto" | "groq" | "local" | "embedded";
 type SttBackend = "local" | "groq";
 type ModeOverride = "auto" | "code" | "email" | "slack" | "raw";
-type HotkeyKind = "fn" | "right_option";
 type EngineStatus = "starting" | "ready" | "failed";
 
 type PremiumModel = "fast" | "premium-haiku" | "premium-sonnet" | "premium-opus" | "premium-gpt41";
@@ -480,11 +481,12 @@ function App() {
               >×</button>
               <div className="fb-welcome-title">meet the Fun Button.</div>
               <div className="fb-welcome-body">
-                <strong>FunButton = Fn Button.</strong> Bottom-left key on your Mac.
-                Nobody used it. We gave it a job.<br/>
+                <strong>FunButton = Fn Button.</strong> On MacBooks it&apos;s the
+                bottom-left key nobody used — we gave it a job. Different keyboard?
+                Pick any key below.<br/>
                 <strong>Zero setup.</strong> Speech-to-text and cleanup run on models
                 bundled inside the app. No account. No key. Works on a plane.<br/>
-                Hold <kbd>{settings.hotkey_kind === "fn" ? "fn" : "Right Option"}</kbd> in any text field, talk, release. Grant the three
+                Hold <kbd>{hotkeyHold(settings.hotkey_kind)}</kbd> in any text field, talk, release. Grant the three
                 permissions below and you're dictating.
               </div>
             </div>
@@ -493,38 +495,18 @@ function App() {
           <div className="fb-section">
             <div className="fb-label-row">
               <label className="fb-label">The Button</label>
-              <span className="fb-label-aux">armed: {settings.hotkey_kind === "fn" ? "fn" : "right ⌥"}</span>
+              <span className="fb-label-aux">armed: {hotkeyShort(settings.hotkey_kind)}</span>
             </div>
-            <div className="fb-keyboard-glyph">
-              <div className={`fb-key ${settings.hotkey_kind === "fn" ? "on" : ""}`} title="The Fn key — bottom-left of every Mac keyboard">
-                <span className="fb-key-label">{settings.hotkey_kind === "fn" ? "fn" : "⌥"}</span>
-                <span className="fb-key-fun">{settings.hotkey_kind === "fn" ? "FUN" : "R-OPT"}</span>
-              </div>
-              <div className="fb-keyboard-caption">
-                {settings.hotkey_kind === "fn" ? (
-                  <>hold it anywhere, talk, release.<br/>
-                  <span className="fb-muted">bottom-left of your keyboard. the one you never used.</span></>
-                ) : (
-                  <>hold Right Option anywhere, talk, release.<br/>
-                  <span className="fb-muted">only needs Accessibility. good if Fn is taken by Karabiner.</span></>
-                )}
-              </div>
-            </div>
-            <div className="fb-radios">
-              {(["fn","right_option"] as const).map(k => (
-                <button
-                  key={k}
-                  className={`fb-pill ${settings.hotkey_kind === k ? "on" : ""}`}
-                  onClick={async () => {
-                    // Hot-swap: persist immediately so the Rust side flips
-                    // the armed-hotkey atomic on save_settings. No app
-                    // restart needed.
-                    setAndSave("hotkey_kind", k);
-                    pushToast("ok", `Hotkey armed: ${k === "fn" ? "Fn" : "Right Option"}`);
-                  }}
-                >{k === "fn" ? "Fn (default)" : "Right Option"}</button>
-              ))}
-            </div>
+            <HotkeyPicker
+              selected={settings.hotkey_kind}
+              onPick={(k) => {
+                // Hot-swap: persist immediately so the Rust side flips the
+                // armed-hotkey atomic on save_settings. No app restart needed.
+                setAndSave("hotkey_kind", k);
+                pushToast("ok", `Hotkey armed: ${hotkeyName(k)}`);
+              }}
+              variant="settings"
+            />
 
             {perms && perms.microphone && perms.accessibility && perms.input_monitoring && (
               <button
@@ -553,7 +535,7 @@ function App() {
                 <PermRow
                   name="Accessibility"
                   granted={perms.accessibility}
-                  why="paste via ⌘V + watch Right Option"
+                  why="paste the cleaned text at your cursor (⌘V)"
                   onGrant={async () => {
                     await invoke("plugin:macos-permissions|request_accessibility_permission").catch(() => {});
                     setTimeout(refreshPerms, 600);
@@ -562,8 +544,8 @@ function App() {
                 <PermRow
                   name="Input Monitoring"
                   granted={perms.input_monitoring}
-                  why={settings.hotkey_kind === "fn" ? "required to see the Fn key" : "only needed for the Fn hotkey"}
-                  required={settings.hotkey_kind === "fn"}
+                  why="required to see your button — every key works this way"
+                  required={true}
                   onGrant={async () => {
                     await invoke("plugin:macos-permissions|request_input_monitoring_permission").catch(() => {});
                     setTimeout(refreshPerms, 600);
@@ -571,10 +553,10 @@ function App() {
                 />
               </div>
             )}
-            {settings.hotkey_kind === "fn" && perms && !perms.input_monitoring && (
+            {perms && !perms.input_monitoring && (
               <div className="fb-callout">
                 <AlertTriangle size={13} aria-hidden />
-                <span>Fn will NOT fire without Input Monitoring. Grant it above — picked up within seconds, no relaunch — or switch to <strong>Right Option</strong> (Accessibility only).</span>
+                <span>{hotkeyName(settings.hotkey_kind)} will NOT fire without Input Monitoring. Grant it above — picked up within seconds, no relaunch.</span>
               </div>
             )}
 
@@ -592,7 +574,7 @@ function App() {
                 }}
               >Test the button</button>
               <span className="fb-hint">
-                bypasses the key listener. works here but not when holding {settings.hotkey_kind === "fn" ? "Fn" : "Right Option"}? macOS is blocking the listener — grant the permission above.
+                bypasses the key listener. works here but not when holding {hotkeyName(settings.hotkey_kind)}? macOS is blocking the listener — grant the permission above.
               </span>
             </div>
             <div className="fb-hint">
@@ -781,7 +763,7 @@ function App() {
               onClick={() => invoke("open_onboarding")}
               style={{ alignSelf: "flex-start" }}
             >Replay onboarding ↻</button>
-            <div className="fb-hint">the Fn key intro, the three permissions, and the cleanup setup — again.</div>
+            <div className="fb-hint">the keyboard walkthrough, the three permissions, and the cleanup setup — again.</div>
           </div>
 
           <footer className="fb-footer">
@@ -863,7 +845,7 @@ function App() {
 
           {history.length === 0 ? (
             <div className="fb-history-empty">
-              nothing yet. hold {settings.hotkey_kind === "fn" ? "Fn" : "Right Option"} and say something.
+              nothing yet. hold {hotkeyName(settings.hotkey_kind)} and say something.
             </div>
           ) : (
             <div className="fb-history-list">
