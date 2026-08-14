@@ -239,11 +239,19 @@ fn close_onboarding(app: AppHandle, state: tauri::State<'_, AppStateHandle>) -> 
     // auto-hides) — exactly the surface the onboarding spec called for, and
     // it doesn't require a fourth webview window.
     use tauri_plugin_notification::NotificationExt;
+    // Name the key the user actually armed — not a hardcoded "fn".
+    let key = if state.settings.lock().hotkey_kind == HotkeyKind::Fn {
+        "fn"
+    } else {
+        "Right Option"
+    };
     let _ = app
         .notification()
         .builder()
         .title("FunButton is ready")
-        .body("hold fn to dictate · ⌘⇧V re-paste · ⌘⇧H history · click the tray icon for settings")
+        .body(format!(
+            "hold {key} to dictate · ⌘⇧V re-paste · ⌘⇧H history · click the tray icon for settings"
+        ))
         .show();
     let _ = app.emit("funbutton:onboarding-complete", ());
     Ok(())
@@ -537,7 +545,7 @@ pub fn run() {
     let recorder_clone = Arc::clone(&recorder);
 
     let state_for_shortcut = Arc::clone(&app_state);
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_shell::init())
@@ -720,11 +728,76 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
 
-    // Touch the unused state ref so the compiler doesn't complain.
-    let _ = app_state;
+    // Drive the event loop ourselves so we can run explicit, ordered teardown
+    // on RunEvent::Exit. This is the AppleEvent-quit crash fix: Cmd-Q / the app
+    // menu / `osascript … quit` all drive `-[NSApplication terminate:]`, which
+    // calls `exit()` and runs C++ static destructors via `__cxa_finalize`. With
+    // the bundled whisper/ggml-metal context still live at that point, its
+    // residency-set teardown tripped `GGML_ASSERT([rsets->data count] == 0)` →
+    // `ggml_abort()` → SIGABRT ("FunButton quit unexpectedly", every quit). tao
+    // dispatches RunEvent::Exit from `applicationWillTerminate:`, i.e. BEFORE
+    // that `exit()`, so `shutdown` releases Metal while it is still alive.
+    // `app_state` was moved into the setup closure above; the teardown reaches
+    // the managed AppState through `app_handle` instead, so this closure
+    // captures nothing.
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            shutdown(app_handle);
+        }
+    });
+}
+
+/// Explicit, ordered quit teardown. Runs on RunEvent::Exit — which tao
+/// dispatches from `applicationWillTerminate:`, BEFORE AppKit's terminate path
+/// calls `exit()` and runs C++ static destructors. Releasing the bundled
+/// whisper/ggml-metal context here tears Metal down while it is still alive,
+/// which is what stops the ggml-metal residency-set teardown from tripping
+/// `GGML_ASSERT([rsets->data count] == 0)` → `ggml_abort()` → SIGABRT during
+/// `__cxa_finalize`. Also reaps the llama-server child so it can't orphan.
+///
+/// Idempotent (the tray "Quit" item calls it directly AND RunEvent::Exit fires
+/// it) and panic-guarded per step: this executes inside an Objective-C
+/// callback, where an unwinding Rust panic would itself abort — so each step
+/// logs and continues instead.
+pub(crate) fn shutdown(app: &AppHandle) {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if DONE.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    log::info!("shutdown: starting ordered teardown");
+    let Some(state) = app.try_state::<AppStateHandle>() else {
+        log::warn!("shutdown: AppState missing; nothing to tear down");
+        return;
+    };
+
+    // (a) Stop new dictations. The CGEventTap listener threads are detached HID
+    // taps (no Metal, no layout/input-source APIs) that the OS reaps at process
+    // exit — nothing of theirs aborts at teardown. This flag just keeps a hold
+    // landing mid-quit from starting a fresh pipeline that would race the
+    // whisper unload below for the session Mutex.
+    state.shutting_down.store(true, Ordering::SeqCst);
+
+    // (b) Kill + reap the llama-server child so it can't orphan.
+    if catch_unwind(AssertUnwindSafe(|| {
+        if let Some(srv) = state.embedded.lock().take() {
+            srv.kill();
+        }
+    }))
+    .is_err()
+    {
+        log::error!("shutdown: llama-server kill panicked (continuing)");
+    }
+
+    // (c) Unload the whisper/Metal context while Metal is still alive.
+    if catch_unwind(AssertUnwindSafe(|| state.stt.unload())).is_err() {
+        log::error!("shutdown: whisper unload panicked (continuing)");
+    }
+
+    log::info!("shutdown: teardown complete");
 }
 
 fn handle_hotkey_loop(
@@ -749,6 +822,11 @@ fn handle_hotkey_loop(
     while let Ok(ev) = rx.recv() {
         match ev {
             HotkeyEvent::Down => {
+                // Quit teardown in flight — don't start a new recording that
+                // would spin up a pipeline racing the whisper-session unload.
+                if state.shutting_down.load(Ordering::SeqCst) {
+                    continue;
+                }
                 let mut rec = recorder.lock();
                 match rec.start() {
                     Ok(()) => {

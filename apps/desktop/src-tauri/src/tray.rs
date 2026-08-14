@@ -337,15 +337,12 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
             sync(app);
         }
         "quit" => {
-            // Drop native resources explicitly — process exit skips Drop
-            // impls, which would orphan the llama-server child and can
-            // SIGABRT ggml-metal in C++ static destructors with a live
-            // Metal context.
-            let st = app.state::<AppStateHandle>();
-            if let Some(srv) = st.embedded.lock().take() {
-                srv.kill();
-            }
-            st.stt.unload();
+            // Same ordered teardown as the AppleEvent-quit path. `app.exit(0)`
+            // then unwinds the event loop and fires RunEvent::Exit, which calls
+            // `shutdown` again — a no-op the second time (it is idempotent).
+            // Doing it here too means the tray path is safe even if a future
+            // runtime change stops emitting RunEvent::Exit for `app.exit`.
+            crate::shutdown(app);
             app.exit(0);
         }
         _ => {}

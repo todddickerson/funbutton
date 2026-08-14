@@ -3,7 +3,7 @@ use crate::embedded_stt::{EmbeddedStt, EmbeddedSttHandle};
 use crate::history::History;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::AtomicU8;
+use std::sync::atomic::{AtomicBool, AtomicU8};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -226,6 +226,10 @@ pub struct AppState {
     /// without going through the listener — useful for bisecting the
     /// pipeline when the listener itself is suspect.
     pub hotkey_tx: Mutex<Option<std::sync::mpsc::Sender<crate::hotkey::HotkeyEvent>>>,
+    /// Set once quit teardown begins (see `crate::shutdown`). The hotkey loop
+    /// checks it so a hold that lands mid-quit can't start a new recording /
+    /// pipeline run and grab the whisper session while we're unloading it.
+    pub shutting_down: AtomicBool,
 }
 
 pub type AppStateHandle = Arc<AppState>;
@@ -244,6 +248,7 @@ impl AppState {
             stt: EmbeddedStt::new(),
             armed_hotkey: armed,
             hotkey_tx: Mutex::new(None),
+            shutting_down: AtomicBool::new(false),
         })
     }
 }
