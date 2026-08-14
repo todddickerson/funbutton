@@ -2,6 +2,23 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-08-14 17:35 — v0.1.6 SHIPPED (branch `ship-v0.1.6`): the quit crash + the hotkey picker are finally in a public build
+
+**Both already-merged fixes (#4 ordered shutdown, #5 real hotkey picker) were stuck behind v0.1.5, which predates them. This release cuts them into a real, installed, QA'd build. Every gate green; the two headline fixes proven on a live `/Applications` install. Full trail in `RUNTIME-QA-v0.1.6.md`.**
+
+**Done:**
+- Version bumped 0.1.5 → **0.1.6** in both `Cargo.toml` and `tauri.conf.json` (kept in sync).
+- **Gates (real):** `cargo check` clean · `cargo build --release` clean 2m17s (R1 linker fix held) · `cargo test --release --lib` **57 passed / 0 failed / 4 ignored** · `cargo fmt --check` green · `cargo clippy` 0 warnings · worker `tsc --noEmit` green · keyless offline STT proof → `"Refactor the auth middleware and open a pull request."` · macOS-26 regression grep clean (comments only) · security guard **4/4** vs the live bundled Qwen.
+  - Two pre-existing gate breaks inherited from #5 were fixed (formatting-only + one redundant `.trim()` clippy lint) — see QA doc Notes. Both also failed on `main` under the current rustfmt/clippy.
+- **Built + packaged:** `.app` reports 0.1.6, both models bundled inside (whisper 81 MB + Qwen 1.1 GB); DMG `FunButton_0.1.6_aarch64.dmg` (1.1 GB) via the Sequoia `hdiutil` workaround, `hdiutil verify` VALID, mounted-and-checked.
+- **Quit-fix PROVEN** (the whole point): installed to `/Applications`, launched with `RUST_LOG=info` (whisper + llama-server up, both taps install, ran 4m+ with zero panic/abort), then **2× AppleEvent quit** — each logged the ordered teardown (`shutdown: starting… → ggml_metal_free: deallocating → teardown complete`), app exited in 1s, its `llama-server` child died. **Zero new `.ips` crash reports** (baseline 3 → 3) and **zero orphaned `llama-server`** from the app.
+- **Hotkey-picker PROVEN:** the running app detected `"Magic Keyboard with Touch ID and Numeric Keypad" → MagicExtended (fn_bottom_left=false)`; `bottomRow('magic_extended')` draws **Control bottom-left, not Fn**; armed-key DOWN/UP selectivity pinned by passing device-bit unit tests.
+- Cut GitHub release **v0.1.6** with the DMG; ran the landing update; opened + merged the `ship-v0.1.6` PR.
+
+**Needs a human (unchanged env limits, not code):** live physical DOWN/UP hold (`scripts/verify-hotkeys.sh` — needs Accessibility, can't self-grant headless), real speech into the mic + paste into a focused app, and first-run TCC grants on a clean account. Exact steps in `RUNTIME-QA-v0.1.6.md` §Human.
+
+**Blocked:** none blocking the release.
+
 ## 2026-08-14 13:30 — Real hotkey picker + visual keyboard, widened key set (branch `feat-hotkey-picker`)
 
 **Fixes the brand's weakest point: "the bottom-left key IS the Fun Button" is FALSE on the Magic Keyboard with Numeric Keypad (bottom-left is Control) — exactly what stumped Todd on the Mac Studio. Now the app detects the keyboard, draws its real bottom row, and lets you pick ANY modifier by click or by pressing it. Branch `feat-hotkey-picker`, PR opened, no release cut.**
