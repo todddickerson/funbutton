@@ -21,7 +21,7 @@
 //! app restart.
 
 #[cfg(target_os = "macos")]
-use crate::hotkey::HotkeyEvent;
+use crate::hotkey::{CaptureState, HotkeyEvent};
 #[cfg(target_os = "macos")]
 use crate::state::HotkeyKind;
 
@@ -31,7 +31,11 @@ use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
 
 #[cfg(target_os = "macos")]
-pub fn spawn_listener(tx: std::sync::mpsc::Sender<HotkeyEvent>, armed: Arc<AtomicU8>) {
+pub fn spawn_listener(
+    tx: std::sync::mpsc::Sender<HotkeyEvent>,
+    armed: Arc<AtomicU8>,
+    capture: Arc<CaptureState>,
+) {
     use core_foundation::runloop::CFRunLoop;
     use core_graphics::event::{
         CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
@@ -57,6 +61,7 @@ pub fn spawn_listener(tx: std::sync::mpsc::Sender<HotkeyEvent>, armed: Arc<Atomi
                 let last_cb = Arc::clone(&last);
                 let tx_cb = tx.clone();
                 let armed_cb = Arc::clone(&armed);
+                let capture_cb = Arc::clone(&capture);
 
                 let result = CGEventTap::with_enabled(
                     CGEventTapLocation::HID,
@@ -67,6 +72,18 @@ pub fn spawn_listener(tx: std::sync::mpsc::Sender<HotkeyEvent>, armed: Arc<Atomi
                         let flags = event.get_flags();
                         let fn_now = flags.contains(CGEventFlags::CGEventFlagSecondaryFn);
                         let fn_was = last_cb.swap(fn_now, Ordering::SeqCst);
+                        // "Press the key you want" capture: report the Fn
+                        // keydown and stand down. Never drives the pipeline.
+                        if capture_cb.active.load(Ordering::SeqCst) {
+                            if fn_now && !fn_was {
+                                if let Some(ctx) = capture_cb.tx.lock().as_ref() {
+                                    let _ = ctx.send(HotkeyKind::Fn.as_u8());
+                                }
+                                capture_cb.active.store(false, Ordering::SeqCst);
+                                log::info!("hotkey capture: Fn pressed");
+                            }
+                            return CallbackResult::Keep;
+                        }
                         // Only emit if the Fn hotkey is the currently armed one.
                         let armed_kind = HotkeyKind::from_u8(armed_cb.load(Ordering::SeqCst));
                         if !matches!(armed_kind, HotkeyKind::Fn) {
@@ -127,6 +144,7 @@ pub fn spawn_listener(tx: std::sync::mpsc::Sender<HotkeyEvent>, armed: Arc<Atomi
 pub fn spawn_listener(
     _tx: std::sync::mpsc::Sender<crate::hotkey::HotkeyEvent>,
     _armed: std::sync::Arc<std::sync::atomic::AtomicU8>,
+    _capture: std::sync::Arc<crate::hotkey::CaptureState>,
 ) {
     log::warn!("Fn key listener is macOS-only; falling back at runtime");
 }

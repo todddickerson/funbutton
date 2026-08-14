@@ -49,13 +49,23 @@ pub enum ModeOverride {
 
 /// Which key acts as push-to-talk.
 ///
-/// - `Fn` — the Function key (bottom-left of every Mac keyboard). Default. The
-///   brand. Detected via CGEventTap on the `kCGEventFlagMaskSecondaryFn` bit
-///   because Fn is not exposed as a normal modifier.
-/// - `RightOption` — fallback for users who already mapped Fn (rare). Detected
-///   via a raw CGEventTap on `FlagsChanged` (virtual keycode `0x3D` +
-///   `CGEventFlagAlternate`); no layout/input-source APIs on the listener
-///   thread, so it's safe on macOS 26 (see `hotkey.rs`).
+/// Every variant except `Fn` is a normal modifier detected by a raw CGEventTap
+/// on `FlagsChanged`, reading only the virtual keycode + the device-specific
+/// modifier flag bit — never a layout/input-source API, so the whole set is
+/// safe on macOS 26 (the off-main-thread TIS/TSM trap; see `hotkey.rs`).
+///
+/// - `Fn` — the Function key. The brand default *where it applies* (built-in
+///   MacBook keyboards and compact Magic Keyboards, where Fn is the bottom-left
+///   key). Detected via the `kCGEventFlagMaskSecondaryFn` bit because Fn is not
+///   exposed as a normal modifier (see `fn_hotkey.rs`). Fn still exists — and
+///   still works — on extended keyboards, it's just not in the bottom-left.
+/// - `RightOption` / `LeftOption` — Option keys (kbd `0x3D` / `0x3A`).
+/// - `RightControl` / `LeftControl` — Control keys (kbd `0x3E` / `0x3B`). On
+///   the extended Magic Keyboard the bottom-left key is Left Control.
+/// - `RightCommand` / `LeftCommand` — Command keys (kbd `0x36` / `0x37`). Left
+///   Command intercepts every ⌘ shortcut, so the UI flags it.
+/// - `CapsLock` — Caps Lock (kbd `0x39`). Toggles rather than reporting a hold,
+///   so it works as tap-to-start / tap-to-stop.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
@@ -63,28 +73,74 @@ pub enum HotkeyKind {
     #[default]
     Fn,
     RightOption,
+    LeftOption,
+    RightControl,
+    LeftControl,
+    RightCommand,
+    LeftCommand,
+    CapsLock,
 }
 
 impl HotkeyKind {
+    /// Runtime tag for the shared `armed` atomic. Fn=0 and RightOption=1 are
+    /// pinned for back-compat with any value already stored at runtime; the
+    /// atomic is never persisted (settings serialize the serde name), so the
+    /// rest are free to append.
     pub fn as_u8(self) -> u8 {
         match self {
             HotkeyKind::Fn => 0,
             HotkeyKind::RightOption => 1,
+            HotkeyKind::RightControl => 2,
+            HotkeyKind::LeftControl => 3,
+            HotkeyKind::RightCommand => 4,
+            HotkeyKind::CapsLock => 5,
+            HotkeyKind::LeftOption => 6,
+            HotkeyKind::LeftCommand => 7,
         }
     }
     pub fn from_u8(v: u8) -> Self {
         match v {
             1 => HotkeyKind::RightOption,
+            2 => HotkeyKind::RightControl,
+            3 => HotkeyKind::LeftControl,
+            4 => HotkeyKind::RightCommand,
+            5 => HotkeyKind::CapsLock,
+            6 => HotkeyKind::LeftOption,
+            7 => HotkeyKind::LeftCommand,
             _ => HotkeyKind::Fn,
         }
     }
-    /// Human label shown in the Settings UI. Single source of truth — never
-    /// persisted; always derived. This is what fixed the "UI says Right Option
-    /// but actual listener is Fn" bug in v0.1.0.
+    /// Virtual keycode this kind fires `FlagsChanged` on, or `None` for `Fn`
+    /// (Fn has no stable modifier keycode — it's read off the SecondaryFn flag
+    /// bit instead, in `fn_hotkey.rs`). Used by the generic keycode listener
+    /// and by "press the key you want" capture.
+    pub fn keycode(self) -> Option<i64> {
+        Some(match self {
+            HotkeyKind::Fn => return None,
+            HotkeyKind::RightOption => 0x3D,
+            HotkeyKind::LeftOption => 0x3A,
+            HotkeyKind::RightControl => 0x3E,
+            HotkeyKind::LeftControl => 0x3B,
+            HotkeyKind::RightCommand => 0x36,
+            HotkeyKind::LeftCommand => 0x37,
+            HotkeyKind::CapsLock => 0x39,
+        })
+    }
+    /// Human label shown in the Settings UI / tray. Single source of truth —
+    /// never persisted; always derived. This is what fixed the "UI says Right
+    /// Option but actual listener is Fn" bug in v0.1.0. Deliberately does NOT
+    /// assert "bottom-left of your keyboard" — that claim is false on extended
+    /// boards, which is the whole reason the picker exists.
     pub fn label(self) -> &'static str {
         match self {
-            HotkeyKind::Fn => "Fn (the Fun Button — bottom-left of your keyboard)",
-            HotkeyKind::RightOption => "Right Option (right side of spacebar)",
+            HotkeyKind::Fn => "Fn (the Fun Button)",
+            HotkeyKind::RightOption => "Right Option (right of the spacebar)",
+            HotkeyKind::LeftOption => "Left Option",
+            HotkeyKind::RightControl => "Right Control",
+            HotkeyKind::LeftControl => "Left Control",
+            HotkeyKind::RightCommand => "Right Command",
+            HotkeyKind::LeftCommand => "Left Command",
+            HotkeyKind::CapsLock => "Caps Lock (tap to start, tap to stop)",
         }
     }
 }
@@ -221,6 +277,11 @@ pub struct AppState {
     /// one whose kind matches this atomic emits Down/Up events. Lets us
     /// hot-swap the active hotkey without restarting the app.
     pub armed_hotkey: Arc<AtomicU8>,
+    /// "Press the key you want" capture. When active, both listeners report the
+    /// first recognized modifier keydown here (regardless of what's armed) and
+    /// suppress the normal push-to-talk path, so the user can bind a key by
+    /// pressing it. See `hotkey::CaptureState`.
+    pub capture: Arc<crate::hotkey::CaptureState>,
     /// Sender end of the hotkey-event channel, kept here so the
     /// `simulate_hotkey` Tauri command can push synthetic Down/Up events
     /// without going through the listener — useful for bisecting the
@@ -247,6 +308,7 @@ impl AppState {
             embedded_error: Mutex::new(None),
             stt: EmbeddedStt::new(),
             armed_hotkey: armed,
+            capture: Arc::new(crate::hotkey::CaptureState::new()),
             hotkey_tx: Mutex::new(None),
             shutting_down: AtomicBool::new(false),
         })
