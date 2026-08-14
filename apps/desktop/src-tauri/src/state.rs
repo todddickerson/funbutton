@@ -143,6 +143,21 @@ impl HotkeyKind {
             HotkeyKind::CapsLock => "Caps Lock (tap to start, tap to stop)",
         }
     }
+    /// Concise word form for inline prose ("hold X to dictate"). Same single
+    /// source as `label`, minus the parenthetical — used by the ready
+    /// notification and any place that names the armed key in a sentence.
+    pub fn short_label(self) -> &'static str {
+        match self {
+            HotkeyKind::Fn => "Fn",
+            HotkeyKind::RightOption => "Right Option",
+            HotkeyKind::LeftOption => "Left Option",
+            HotkeyKind::RightControl => "Right Control",
+            HotkeyKind::LeftControl => "Left Control",
+            HotkeyKind::RightCommand => "Right Command",
+            HotkeyKind::LeftCommand => "Left Command",
+            HotkeyKind::CapsLock => "Caps Lock",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

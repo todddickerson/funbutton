@@ -296,12 +296,9 @@ fn close_onboarding(app: AppHandle, state: tauri::State<'_, AppStateHandle>) -> 
     // auto-hides) — exactly the surface the onboarding spec called for, and
     // it doesn't require a fourth webview window.
     use tauri_plugin_notification::NotificationExt;
-    // Name the key the user actually armed — not a hardcoded "fn".
-    let key = if state.settings.lock().hotkey_kind == HotkeyKind::Fn {
-        "fn"
-    } else {
-        "Right Option"
-    };
+    // Name the key the user actually armed — not a hardcoded "fn". Derived from
+    // the single source so it stays correct across the full widened key set.
+    let key = state.settings.lock().hotkey_kind.short_label();
     let _ = app
         .notification()
         .builder()
@@ -836,12 +833,17 @@ pub(crate) fn shutdown(app: &AppHandle) {
         return;
     };
 
-    // (a) Stop new dictations. The CGEventTap listener threads are detached HID
-    // taps (no Metal, no layout/input-source APIs) that the OS reaps at process
-    // exit — nothing of theirs aborts at teardown. This flag just keeps a hold
-    // landing mid-quit from starting a fresh pipeline that would race the
-    // whisper unload below for the session Mutex.
+    // (a) Stop new dictations. Both CGEventTap listener threads — the Fn tap
+    // and the generalized keycode-modifier tap — are detached HID taps (no
+    // Metal, no layout/input-source APIs) that the OS reaps at process exit;
+    // nothing of theirs aborts at teardown. `shutting_down` gates the shared
+    // hotkey loop, so a hold on ANY armed key (Fn / Right Option / Right
+    // Control / …) landing mid-quit can't start a fresh pipeline that would
+    // race the whisper unload below for the session Mutex. Also stand down any
+    // in-flight "press the key you want" capture so its waiter can't linger.
     state.shutting_down.store(true, Ordering::SeqCst);
+    state.capture.active.store(false, Ordering::SeqCst);
+    *state.capture.tx.lock() = None;
 
     // (b) Kill + reap the llama-server child so it can't orphan.
     if catch_unwind(AssertUnwindSafe(|| {
