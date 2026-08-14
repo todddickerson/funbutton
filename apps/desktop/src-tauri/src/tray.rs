@@ -416,6 +416,12 @@ fn hotkey_short(k: HotkeyKind) -> &'static str {
     match k {
         HotkeyKind::Fn => "Fn",
         HotkeyKind::RightOption => "Right ⌥",
+        HotkeyKind::LeftOption => "Left ⌥",
+        HotkeyKind::RightControl => "Right ⌃",
+        HotkeyKind::LeftControl => "Left ⌃",
+        HotkeyKind::RightCommand => "Right ⌘",
+        HotkeyKind::LeftCommand => "Left ⌘",
+        HotkeyKind::CapsLock => "Caps Lock",
     }
 }
 

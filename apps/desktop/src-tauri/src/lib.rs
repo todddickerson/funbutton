@@ -10,6 +10,7 @@ mod guard;
 mod history;
 mod hotkey;
 mod inject;
+mod keyboard;
 mod keychain;
 mod ollama;
 mod pipeline;
@@ -103,6 +104,62 @@ fn save_settings(
 #[tauri::command]
 fn get_hotkey_label(state: tauri::State<'_, AppStateHandle>) -> String {
     state.settings.lock().hotkey_kind.label().to_string()
+}
+
+/// Detect the connected keyboard so the picker can draw an accurate bottom row
+/// and offer a sensible default. Never errors — a generic layout is returned
+/// when nothing recognizable is found.
+#[tauri::command]
+fn detect_keyboard() -> keyboard::KeyboardInfo {
+    keyboard::detect()
+}
+
+/// "Press the key you want" capture. Arms both listeners to report the first
+/// recognized modifier keydown, then emits `funbutton:hotkey-captured` with the
+/// detected `HotkeyKind` (serde name), or `funbutton:hotkey-capture-timeout`
+/// after `timeout_ms` (default 8000). Returns immediately so the UI never
+/// blocks; captured events never trigger the dictation pipeline.
+#[tauri::command]
+fn capture_hotkey(
+    app: AppHandle,
+    state: tauri::State<'_, AppStateHandle>,
+    timeout_ms: Option<u64>,
+) -> Result<(), String> {
+    let (ctx, crx) = mpsc::channel::<u8>();
+    {
+        *state.capture.tx.lock() = Some(ctx);
+        state.capture.active.store(true, Ordering::SeqCst);
+    }
+    let capture = Arc::clone(&state.capture);
+    let dur = std::time::Duration::from_millis(timeout_ms.unwrap_or(8000));
+    log::info!("hotkey capture armed ({} ms window)", dur.as_millis());
+    std::thread::spawn(move || {
+        let res = crx.recv_timeout(dur);
+        // Stand down regardless of outcome so a stray keydown can't bind later.
+        capture.active.store(false, Ordering::SeqCst);
+        *capture.tx.lock() = None;
+        match res {
+            Ok(kind_u8) => {
+                let kind = HotkeyKind::from_u8(kind_u8);
+                log::info!("hotkey capture: resolved to {kind:?}");
+                let _ = app.emit("funbutton:hotkey-captured", kind);
+            }
+            Err(_) => {
+                log::info!("hotkey capture: timed out");
+                let _ = app.emit("funbutton:hotkey-capture-timeout", ());
+            }
+        }
+    });
+    Ok(())
+}
+
+/// Cancel an in-flight capture (user navigated away / hit escape). The blocking
+/// thread in `capture_hotkey` then times out harmlessly since `tx` is dropped.
+#[tauri::command]
+fn cancel_hotkey_capture(state: tauri::State<'_, AppStateHandle>) {
+    state.capture.active.store(false, Ordering::SeqCst);
+    *state.capture.tx.lock() = None;
+    log::info!("hotkey capture cancelled");
 }
 
 /// Simulate a hotkey Down→Up cycle. Bisection tool: confirms that the audio
@@ -239,12 +296,9 @@ fn close_onboarding(app: AppHandle, state: tauri::State<'_, AppStateHandle>) -> 
     // auto-hides) — exactly the surface the onboarding spec called for, and
     // it doesn't require a fourth webview window.
     use tauri_plugin_notification::NotificationExt;
-    // Name the key the user actually armed — not a hardcoded "fn".
-    let key = if state.settings.lock().hotkey_kind == HotkeyKind::Fn {
-        "fn"
-    } else {
-        "Right Option"
-    };
+    // Name the key the user actually armed — not a hardcoded "fn". Derived from
+    // the single source so it stays correct across the full widened key set.
+    let key = state.settings.lock().hotkey_kind.short_label();
     let _ = app
         .notification()
         .builder()
@@ -512,12 +566,14 @@ pub fn run() {
     *app_state.hotkey_tx.lock() = Some(tx.clone());
     let armed_fn = Arc::clone(&app_state.armed_hotkey);
     let armed_ro = Arc::clone(&app_state.armed_hotkey);
+    let capture_fn = Arc::clone(&app_state.capture);
+    let capture_ro = Arc::clone(&app_state.capture);
     log::info!(
         "spawning both hotkey listeners; armed = {:?}",
         app_state.settings.lock().hotkey_kind
     );
-    fn_hotkey::spawn_listener(tx.clone(), armed_fn);
-    hotkey::spawn_listener(tx.clone(), armed_ro);
+    fn_hotkey::spawn_listener(tx.clone(), armed_fn, capture_fn);
+    hotkey::spawn_listener(tx.clone(), armed_ro, capture_ro);
 
     // Headless verification hook: FUNBUTTON_SELFTEST=1 fires one synthetic
     // Down→Up cycle after the bundled models have had time to load, so the
@@ -592,6 +648,9 @@ pub fn run() {
             get_status,
             get_last_transcript,
             get_hotkey_label,
+            detect_keyboard,
+            capture_hotkey,
+            cancel_hotkey_capture,
             simulate_hotkey,
             ollama_check,
             embedded_check,
@@ -774,12 +833,17 @@ pub(crate) fn shutdown(app: &AppHandle) {
         return;
     };
 
-    // (a) Stop new dictations. The CGEventTap listener threads are detached HID
-    // taps (no Metal, no layout/input-source APIs) that the OS reaps at process
-    // exit — nothing of theirs aborts at teardown. This flag just keeps a hold
-    // landing mid-quit from starting a fresh pipeline that would race the
-    // whisper unload below for the session Mutex.
+    // (a) Stop new dictations. Both CGEventTap listener threads — the Fn tap
+    // and the generalized keycode-modifier tap — are detached HID taps (no
+    // Metal, no layout/input-source APIs) that the OS reaps at process exit;
+    // nothing of theirs aborts at teardown. `shutting_down` gates the shared
+    // hotkey loop, so a hold on ANY armed key (Fn / Right Option / Right
+    // Control / …) landing mid-quit can't start a fresh pipeline that would
+    // race the whisper unload below for the session Mutex. Also stand down any
+    // in-flight "press the key you want" capture so its waiter can't linger.
     state.shutting_down.store(true, Ordering::SeqCst);
+    state.capture.active.store(false, Ordering::SeqCst);
+    *state.capture.tx.lock() = None;
 
     // (b) Kill + reap the llama-server child so it can't orphan.
     if catch_unwind(AssertUnwindSafe(|| {
