@@ -44,7 +44,10 @@ pub enum KeyboardLayout {
 impl KeyboardLayout {
     /// Whether the physical bottom-left key is Fn (true) or Control (false).
     pub fn fn_bottom_left(self) -> bool {
-        matches!(self, KeyboardLayout::BuiltinMacbook | KeyboardLayout::MagicCompact)
+        matches!(
+            self,
+            KeyboardLayout::BuiltinMacbook | KeyboardLayout::MagicCompact
+        )
     }
 
     /// The sensible default hotkey for this layout, as a `HotkeyKind` serde
@@ -121,8 +124,10 @@ fn classify_name(name: &str) -> (KeyboardLayout, bool) {
     if n.contains("internal") || n.contains("built-in") {
         return (KeyboardLayout::BuiltinMacbook, true);
     }
-    let extended_marker =
-        n.contains("numeric") || n.contains("keypad") || n.contains("full") || n.contains("extended");
+    let extended_marker = n.contains("numeric")
+        || n.contains("keypad")
+        || n.contains("full")
+        || n.contains("extended");
     // Apple full-size / numeric-keypad boards → Left Control is bottom-left.
     if (n.contains("magic keyboard") || n.contains("apple keyboard")) && extended_marker {
         return (KeyboardLayout::MagicExtended, false);
@@ -165,9 +170,11 @@ pub fn detect() -> KeyboardInfo {
         // Apple (AppleHIDKeyboardEventDriverV2) and generic third-party
         // (IOHIDKeyboard) boards are covered.
         for class in ["AppleHIDKeyboardEventDriverV2", "IOHIDKeyboard"] {
-            if let Some(out) =
-                output_with_timeout("ioreg", &["-r", "-c", class, "-d", "1"], Duration::from_secs(2))
-            {
+            if let Some(out) = output_with_timeout(
+                "ioreg",
+                &["-r", "-c", class, "-d", "1"],
+                Duration::from_secs(2),
+            ) {
                 let candidates = parse_ioreg(&out);
                 if let Some(best) = pick_best(&candidates) {
                     let info = KeyboardInfo::from_candidate(best, "ioreg");
@@ -337,7 +344,7 @@ fn parse_system_profiler(text: &str) -> Vec<Candidate> {
 }
 
 fn parse_hex_or_dec(s: &str) -> Option<u32> {
-    let tok = s.trim().split_whitespace().next()?;
+    let tok = s.split_whitespace().next()?;
     if let Some(hex) = tok.strip_prefix("0x").or_else(|| tok.strip_prefix("0X")) {
         u32::from_str_radix(hex, 16).ok()
     } else {
@@ -355,20 +362,23 @@ mod tests {
         let (layout, builtin) = classify_name("Magic Keyboard with Touch ID and Numeric Keypad");
         assert_eq!(layout, KeyboardLayout::MagicExtended);
         assert!(!builtin);
-        assert!(!layout.fn_bottom_left(), "extended board: bottom-left is Control, not Fn");
+        assert!(
+            !layout.fn_bottom_left(),
+            "extended board: bottom-left is Control, not Fn"
+        );
         assert_eq!(layout.default_hotkey(), "right_option");
     }
 
     #[test]
     fn compact_magic_keyboard_keeps_fn_bottom_left() {
-        for name in [
-            "Magic Keyboard",
-            "Magic Keyboard with Touch ID",
-        ] {
+        for name in ["Magic Keyboard", "Magic Keyboard with Touch ID"] {
             let (layout, builtin) = classify_name(name);
             assert_eq!(layout, KeyboardLayout::MagicCompact, "{name}");
             assert!(!builtin);
-            assert!(layout.fn_bottom_left(), "{name}: compact board keeps Fn bottom-left");
+            assert!(
+                layout.fn_bottom_left(),
+                "{name}: compact board keeps Fn bottom-left"
+            );
             assert_eq!(layout.default_hotkey(), "fn");
         }
     }
@@ -384,11 +394,19 @@ mod tests {
 
     #[test]
     fn unknown_third_party_is_generic_without_fn_claim() {
-        for name in ["Keychron K2", "HHKB Professional", "USB Keyboard", "Logitech MX Keys"] {
+        for name in [
+            "Keychron K2",
+            "HHKB Professional",
+            "USB Keyboard",
+            "Logitech MX Keys",
+        ] {
             let (layout, builtin) = classify_name(name);
             assert_eq!(layout, KeyboardLayout::Generic, "{name}");
             assert!(!builtin);
-            assert!(!layout.fn_bottom_left(), "{name}: never assert Fn on unknown boards");
+            assert!(
+                !layout.fn_bottom_left(),
+                "{name}: never assert Fn on unknown boards"
+            );
             assert_eq!(layout.default_hotkey(), "right_option");
         }
     }
@@ -409,7 +427,10 @@ mod tests {
 "#;
         let candidates = parse_ioreg(sample);
         assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].name, "Magic Keyboard with Touch ID and Numeric Keypad");
+        assert_eq!(
+            candidates[0].name,
+            "Magic Keyboard with Touch ID and Numeric Keypad"
+        );
         assert_eq!(candidates[0].vendor_id, Some(1452));
         assert_eq!(candidates[0].product_id, Some(671));
 
@@ -422,11 +443,22 @@ mod tests {
     #[test]
     fn picks_external_over_builtin() {
         let candidates = vec![
-            Candidate { name: "Apple Internal Keyboard / Trackpad".into(), vendor_id: Some(1452), product_id: Some(1) },
-            Candidate { name: "Magic Keyboard with Numeric Keypad".into(), vendor_id: Some(1452), product_id: Some(671) },
+            Candidate {
+                name: "Apple Internal Keyboard / Trackpad".into(),
+                vendor_id: Some(1452),
+                product_id: Some(1),
+            },
+            Candidate {
+                name: "Magic Keyboard with Numeric Keypad".into(),
+                vendor_id: Some(1452),
+                product_id: Some(671),
+            },
         ];
         let best = pick_best(&candidates).unwrap();
-        assert!(best.name.contains("Numeric"), "external extended board should win");
+        assert!(
+            best.name.contains("Numeric"),
+            "external extended board should win"
+        );
     }
 
     #[test]
@@ -444,7 +476,10 @@ mod tests {
 ";
         let candidates = parse_system_profiler(sample);
         assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].name, "Magic Keyboard with Touch ID and Numeric Keypad");
+        assert_eq!(
+            candidates[0].name,
+            "Magic Keyboard with Touch ID and Numeric Keypad"
+        );
         assert_eq!(candidates[0].product_id, Some(0x029f));
         assert_eq!(candidates[0].vendor_id, Some(0x05ac));
     }
@@ -468,7 +503,11 @@ mod tests {
         println!("DETECTED KEYBOARD: {info:#?}");
         // On the tester's Mac Studio this is the Magic Keyboard with Numeric
         // Keypad → extended layout, Control (not Fn) in the bottom-left.
-        assert_eq!(info.layout, KeyboardLayout::MagicExtended, "expected extended board");
+        assert_eq!(
+            info.layout,
+            KeyboardLayout::MagicExtended,
+            "expected extended board"
+        );
         assert!(!info.fn_bottom_left, "bottom-left must be Control, not Fn");
         assert!(
             info.model.to_lowercase().contains("numeric"),

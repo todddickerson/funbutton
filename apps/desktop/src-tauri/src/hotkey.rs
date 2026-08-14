@@ -258,7 +258,11 @@ pub fn spawn_listener(tx: Sender<HotkeyEvent>, armed: Arc<AtomicU8>, capture: Ar
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn spawn_listener(_tx: Sender<HotkeyEvent>, _armed: Arc<AtomicU8>, _capture: Arc<CaptureState>) {
+pub fn spawn_listener(
+    _tx: Sender<HotkeyEvent>,
+    _armed: Arc<AtomicU8>,
+    _capture: Arc<CaptureState>,
+) {
     log::warn!("modifier-key listener is macOS-only; falling back at runtime");
 }
 
@@ -288,11 +292,23 @@ mod tests {
     #[test]
     fn device_bits_disambiguate_left_and_right() {
         // Right Control device bit set, left clear → only Right Control active.
-        assert!(is_active(HotkeyKind::RightControl, NX_DEVICE_RCTRL | CG_CONTROL));
-        assert!(!is_active(HotkeyKind::LeftControl, NX_DEVICE_RCTRL | CG_CONTROL));
+        assert!(is_active(
+            HotkeyKind::RightControl,
+            NX_DEVICE_RCTRL | CG_CONTROL
+        ));
+        assert!(!is_active(
+            HotkeyKind::LeftControl,
+            NX_DEVICE_RCTRL | CG_CONTROL
+        ));
         // Left Option device bit set → only Left Option active.
-        assert!(is_active(HotkeyKind::LeftOption, NX_DEVICE_LALT | CG_ALTERNATE));
-        assert!(!is_active(HotkeyKind::RightOption, NX_DEVICE_LALT | CG_ALTERNATE));
+        assert!(is_active(
+            HotkeyKind::LeftOption,
+            NX_DEVICE_LALT | CG_ALTERNATE
+        ));
+        assert!(!is_active(
+            HotkeyKind::RightOption,
+            NX_DEVICE_LALT | CG_ALTERNATE
+        ));
     }
 
     #[test]
@@ -374,8 +390,12 @@ mod tests {
 
         // Let both taps install (retries every 3s if IM was just granted).
         std::thread::sleep(Duration::from_millis(1500));
-        let drain = |rx: &std::sync::mpsc::Receiver<HotkeyEvent>| while rx.recv_timeout(Duration::from_millis(60)).is_ok() {};
-        let next = |rx: &std::sync::mpsc::Receiver<HotkeyEvent>| rx.recv_timeout(Duration::from_millis(1500)).ok();
+        let drain = |rx: &std::sync::mpsc::Receiver<HotkeyEvent>| {
+            while rx.recv_timeout(Duration::from_millis(60)).is_ok() {}
+        };
+        let next = |rx: &std::sync::mpsc::Receiver<HotkeyEvent>| {
+            rx.recv_timeout(Duration::from_millis(1500)).ok()
+        };
 
         // Probe: Right Control armed, inject a down.
         armed.store(HotkeyKind::RightControl.as_u8(), Ordering::SeqCst);
@@ -398,7 +418,10 @@ mod tests {
         // Right Option must NOT fire while Right Control is armed.
         post(0x3D, NX_DEVICE_RALT | CG_ALTERNATE);
         post(0x3D, 0);
-        assert!(next(&rx).is_none(), "Right Option leaked while Right Control armed");
+        assert!(
+            next(&rx).is_none(),
+            "Right Option leaked while Right Control armed"
+        );
         println!("[armed=RightControl] inject ROpt → correctly silent");
 
         // Right Option armed.
@@ -413,7 +436,10 @@ mod tests {
         assert_eq!(up, Some(HotkeyEvent::Up), "Right Option UP");
         post(0x3E, NX_DEVICE_RCTRL | CG_CONTROL);
         post(0x3E, 0);
-        assert!(next(&rx).is_none(), "Right Control leaked while Right Option armed");
+        assert!(
+            next(&rx).is_none(),
+            "Right Control leaked while Right Option armed"
+        );
         println!("[armed=RightOption] inject RCtrl → correctly silent");
 
         // Fn armed (SecondaryFn bit; keycode irrelevant to the Fn tap).
