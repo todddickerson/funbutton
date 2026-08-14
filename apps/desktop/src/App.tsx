@@ -484,7 +484,7 @@ function App() {
                 Nobody used it. We gave it a job.<br/>
                 <strong>Zero setup.</strong> Speech-to-text and cleanup run on models
                 bundled inside the app. No account. No key. Works on a plane.<br/>
-                Hold <kbd>fn</kbd> in any text field, talk, release. Grant the three
+                Hold <kbd>{settings.hotkey_kind === "fn" ? "fn" : "Right Option"}</kbd> in any text field, talk, release. Grant the three
                 permissions below and you're dictating.
               </div>
             </div>

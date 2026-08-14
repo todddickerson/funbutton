@@ -239,11 +239,19 @@ fn close_onboarding(app: AppHandle, state: tauri::State<'_, AppStateHandle>) -> 
     // auto-hides) — exactly the surface the onboarding spec called for, and
     // it doesn't require a fourth webview window.
     use tauri_plugin_notification::NotificationExt;
+    // Name the key the user actually armed — not a hardcoded "fn".
+    let key = if state.settings.lock().hotkey_kind == HotkeyKind::Fn {
+        "fn"
+    } else {
+        "Right Option"
+    };
     let _ = app
         .notification()
         .builder()
         .title("FunButton is ready")
-        .body("hold fn to dictate · ⌘⇧V re-paste · ⌘⇧H history · click the tray icon for settings")
+        .body(format!(
+            "hold {key} to dictate · ⌘⇧V re-paste · ⌘⇧H history · click the tray icon for settings"
+        ))
         .show();
     let _ = app.emit("funbutton:onboarding-complete", ());
     Ok(())

@@ -603,6 +603,10 @@ function backendLabel(b: string): string {
 }
 
 function Step7({ onFinish, hotkeyKind }: { onFinish: () => void; hotkeyKind: HotkeyKind }) {
+  // Single source of truth for the armed key in every user-facing string in
+  // this step. Hardcoding "fn" here told Right Option users to hold the wrong
+  // key, so nothing below may name a key except through this.
+  const keyLabel = hotkeyKind === "fn" ? "fn" : "right option";
   const [waveform, setWaveform] = useState<number[]>(new Array(16).fill(0));
   const audioRef = useRef<{ ctx: AudioContext; analyser: AnalyserNode; data: Uint8Array; stream: MediaStream } | null>(null);
   const padRef = useRef<HTMLTextAreaElement | null>(null);
@@ -669,10 +673,10 @@ function Step7({ onFinish, hotkeyKind }: { onFinish: () => void; hotkeyKind: Hot
         else if (s === "pasting") setStage(3);
         else if (s === "error") {
           setStage(-1);
-          setPipeErr(e.payload.message || "pipeline hiccup — hold fn and try again");
+          setPipeErr(e.payload.message || `pipeline hiccup — hold ${keyLabel} and try again`);
         } else if (s === "idle" && e.payload.message === "too short") {
           setStage(-1);
-          setPipeErr("too short — hold fn a beat longer");
+          setPipeErr(`too short — hold ${keyLabel} a beat longer`);
         }
       }).catch(() => null),
       listen<ResultPayload>("funbutton:result", (e) => {
@@ -711,7 +715,7 @@ function Step7({ onFinish, hotkeyKind }: { onFinish: () => void; hotkeyKind: Hot
     <section className="ob-slide compact go">
       <h1 className="ob-h1 small">Push the button.</h1>
       <p className="ob-sub small">
-        Hold <Keycap>{hotkeyKind === "fn" ? "fn" : "right option"}</Keycap>, say what you&apos;re hacking on, let go.
+        Hold <Keycap>{keyLabel}</Keycap>, say what you&apos;re hacking on, let go.
       </p>
       <div className={`ob-pad ${landed ? "landed" : ""} ${stage >= 0 && stage < 4 ? "busy" : ""} ${pipeErr ? "stalled" : ""}`}>
         <div className="ob-pad-top">
@@ -729,7 +733,7 @@ function Step7({ onFinish, hotkeyKind }: { onFinish: () => void; hotkeyKind: Hot
           autoFocus
           spellCheck={false}
           aria-label="dictation landing pad"
-          placeholder="Hold fn and let it rip — the cleaned text lands right here."
+          placeholder={`Hold ${keyLabel} and let it rip — the cleaned text lands right here.`}
         />
         <div className="ob-pad-rail">
           {PIPE_STAGES.map((label, i) => (
@@ -743,7 +747,7 @@ function Step7({ onFinish, hotkeyKind }: { onFinish: () => void; hotkeyKind: Hot
       <p className="ob-muted ob-pad-note">
         {landed
           ? "That was the whole loop. It lands like that in every app you own."
-          : "This box is just the demo. Fn is caught OS-wide, so every app is fair game."}
+          : `This box is just the demo — ${keyLabel} is caught OS-wide, so every app is fair game.`}
       </p>
       <div className="ob-cta-row tight">
         <button className="ob-btn primary" onClick={onFinish}>
