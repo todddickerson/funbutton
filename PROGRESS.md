@@ -2,6 +2,35 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-08-14 12:10 — Fixed the crash-on-EVERY-quit (SIGABRT) + the wrong-hotkey onboarding copy
+
+**Branch `fix-quit-crash` (off `main`). Two independent correctness bugs, both proven fixed on a real `/Applications` install of a fresh release build. No release cut, no landing deploy, no comms — Todd handles those. PR into `main` open.**
+
+### Bug 1 — "FunButton quit unexpectedly" on every quit (the headline)
+
+**Symptom:** every AppleEvent quit (Cmd-Q / the "Quit" menu / `osascript … quit`) popped the macOS crash dialog. `EXC_CRASH (SIGABRT)`, main thread, `abort` ← funbutton ← `__cxa_finalize_ranges` ← `exit` ← `-[NSApplication terminate:]` ← `_handleAEQuit`. Reproduced twice by Todd; I reproduced a third (`funbutton-2026-08-14-114633.ips`) on the installed v0.1.5.
+
+**Root cause (proven, not guessed — symbolicated the stripped release binary by disassembly since no dSYM exists):**
+- Frame 3 = `ggml_abort()` in `transcribe-cpp-sys-0.1.3/ggml/src/ggml.c` (the `"%s:%d: "` prefix + `vsnprintf` + the `gdb/lldb … "attach %d" … "bt" … detach quit` backtrace-printer + `bl _abort`).
+- Frame 4 = `ggml-metal/ggml-metal-device.m`, at the assertion **`GGML_ASSERT([rsets->data count] == 0)`** (residency-set collection teardown; `"GGML_ASSERT(%s) failed"`, `ggml_metal_rsets_init` context).
+- So: on quit, AppKit's `terminate:` calls `exit()`, which runs the ggml/ggml-metal **C++ static destructors** via `__cxa_finalize`. The whisper Metal context (`use residency sets = true` on M-series) was still live, its residency-set collection non-empty, so the teardown assertion tripped → `ggml_abort` → `SIGABRT`. The v0.1.3 tray-Quit handler already unloaded Metal explicitly and never crashed; the AppleEvent path had **no teardown at all** (`run()` used `.run(generate_context!())` with no `RunEvent` handler), so it always deferred Metal teardown to static-destructor time — hence the abort on *every* quit. Bonus: because the crash aborted before reaping the child, every crashed quit **orphaned a `llama-server`** (found 3 stale ones live on Todd's machine).
+
+**Fix:** switched `run()` to `.build()? + app.run(|h, e| …)` and added an explicit, ordered, panic-guarded `shutdown()` on `RunEvent::Exit`. tao dispatches `RunEvent::Exit` from `applicationWillTerminate:` — i.e. **before** `exit()` runs the static destructors — so `shutdown()` (a) flags `shutting_down` to stop a mid-quit hold starting a new pipeline, (b) kills+reaps the `llama-server` child, (c) unloads the whisper/Metal context **while Metal is still alive**. The tray-Quit handler now calls the same `shutdown()` before `app.exit(0)` (idempotent via a `DONE` guard), so both quit paths run one identical teardown.
+
+**Proof (real `/Applications` install of the fixed release `.app`, arm64, macOS 15.6.1, M3 Ultra):**
+- Whisper up on `MTL0` (`use residency sets = true`), llama-server child up. AppleEvent quit (`osascript … quit`) ×2 → app exits in 1s, log shows `shutdown: starting … → ggml_metal_free: deallocating → shutdown: teardown complete`, **zero new `.ips`**, **zero `llama-server` orphan**. (Before the fix, the same action produced a fresh `.ips` every time.)
+- Tray "Quit" path: verified **by construction** — it calls the same empirically-proven `shutdown()` (frees Metal, kills child) *before* `app.exit(0)`, so Metal is gone before any exit. I could **not** UI-click the tray menu to exercise it live because the shell has no Accessibility/TCC grant (System Events → `-25211`), and I did not modify TCC. `app.exit(0)` is the only non-AppleEvent exit path and it now runs `shutdown()` first.
+
+### Bug 2 — onboarding/settings told Right-Option users to hold "fn"
+
+Onboarding step 7 (and a couple of sibling surfaces) hardcoded `fn` even when the user had armed Right Option — Todd only got it working by guessing. Fixed by hoisting one `keyLabel` (derived from `hotkeyKind`) in `Step7` and routing every user-facing key mention through it (`onboarding.tsx` lines that were 672/675/714/732/746). Also made `App.tsx`'s welcome-card "Hold …" and `lib.rs`'s onboarding-complete notification derive from the armed hotkey. Left brand/education copy alone (the step-1 hero "the Fn button is finally the fun button", the keyboard diagram, the Fn-only emoji-picker troubleshooting) — those are about the Fn key as a concept, not a "hold this key" instruction. Verified in the built bundle: every step-7 instruction interpolates the label (`Hold ${t} and let it rip`, `hold ${t} and try again`, …) and **no hardcoded "hold fn" instruction remains**. Live visual confirmation needs screen-recording TCC (not granted) — Todd can eyeball, but the compiled artifact ships the dynamic labels.
+
+**Gates (all green, real build):** `cargo build --release` clean · `cargo test --release --lib` 43 passed / 0 failed / 2 ignored · keyless offline STT proof PASS (`GROQ_API_KEY` unset → `"Refactor the auth middleware and open a pull request."`) · macOS-26 crash-API regression grep clean (doc-comments only) · frontend `tsc` clean.
+
+**Next:** Todd — merge the PR, then the next signed release picks up the fix. (I restored the original crashing v0.1.5 to `/Applications`; the fixed unsigned `.app` is at `apps/desktop/src-tauri/target/release/bundle/macos/FunButton.app` in the `fix-quit-crash` worktree if you want it immediately.)
+
+**Blocked:** none.
+
 ## 2026-08-10 12:30 — Shipped v0.1.5: first public release of the gauntlet polish + security guard
 
 **The six-surface Gauntlet v2 polish AND the security-guard / non-blocking-detection follow-up (both on `main` since 08-08 but never released) are now the public v0.1.5 release. Also fixed the release-blocking landing bug (finding #12). Worked on branch `ship-v0.1.5`, PR #3 merged to main. Release cut. Landing deploy BLOCKED on Vercel creds — details below.**
