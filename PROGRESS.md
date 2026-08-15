@@ -2,6 +2,37 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-08-15 12:25 — Tiny installer: models stripped from the bundle, downloaded on first run (branch `feat-model-downloader`)
+
+**The shipped app went from 1.2 GB → a 16 MB DMG. We were shipping 1.1 GB of `.gguf` inside the .app to deliver a 17 MB app. Now the .app ships zero models; whisper + a cleanup LLM download on first run into Application Support (NOT the bundle — so future code-signing stays intact), SHA-256-verified, resumable, cancellable. A model manager in Settings lets you add/swap smaller-faster or bigger-sharper models. PR opened into `main`; no release cut, landing not deployed — Todd reviews.**
+
+**Size before → after (measured on real builds):**
+- v0.1.6 `.app` **1.2 GB** · DMG **1.2 GB**.
+- v0.1.7 `.app` **39 MB** · DMG **16 MB** (17,037,389 bytes). ~31× / ~75× smaller.
+- Bonus win: the ggml/llama dylibs were being triplicated (Tauri dereferences the `libX.dylib → libX.0.dylib → libX.0.0.9151.dylib` symlink chain into three full copies). Narrowed the bundle glob to `lib*.0.dylib` — the only names `llama-server` actually `@rpath`-loads (verified via `otool -L`/`-D`) — which cut the app from 66 MB → 39 MB.
+
+**What shipped:**
+- **Bundle stripped** (`tauri.conf.json`): removed both `.gguf` resources; kept the signed `llama-server` binary + the `.0.dylib` runtime. Produced `.app` contains **zero `.gguf`** (verified).
+- **`models.rs`** — new module: versioned JSON manifest (`models_manifest.json`, baked-in + fetched live from the repo raw URL so models can be added without an app update), Application-Support model store (`~/Library/Application Support/ai.funbutton.desktop/models/`), resumable HTTP-Range downloads with per-chunk cancel + capped-exponential-backoff retry, **full-file SHA-256 verification** before a `.part` is promoted, and migration from a prior bundled install.
+- **First-run download in onboarding** (`onboarding.tsx` step 6, "models"): each required model with live bytes / % / speed / ETA, SHA verify, per-model retry, cancel; the app degrades honestly (whisper-only ⇒ STT works, cleanup falls back to raw passthrough).
+- **Model manager in Settings** (`App.tsx` + `models.tsx`): installed / not / downloading / active per role, size + one-line "what it's good for", download / delete (free disk) / pick-active, total disk used.
+- **Honest state everywhere:** engine board, tray, onboarding now distinguish `missing` / `downloading` / `starting` / `ready` / `failed` — never "ready" when a model is absent. Tray lines for missing/downloading are clickable → Settings.
+- **Migration:** on first run, any model still reachable in a prior bundle (dev vendor tree, side-by-side install, not-yet-deleted old .app) is SHA-checked and moved/copied into place instead of re-downloading 1.1 GB; else the download flow takes over.
+- **Quit-path bug found + fixed:** a quit landing while `llama-server` was still *starting* orphaned the child (its handle wasn't in `AppState` yet, so `shutdown()`'s handle-kill missed it). Fixed with a process-wide PID registry + a `SPAWN_GATE` that serializes "check-shutting-down + spawn + register" against "latch + reap" — a child either registers before the reap or never spawns. Stress-tested across the whole startup window: zero orphans.
+
+**Curated model set — every URL resolved, every SHA-256 pinned from HF's `x-linked-etag` (== the git-LFS OID; cross-checked against the known-good whisper hash), and every file LOAD-TESTED:**
+- STT (transcribe-cpp/whisper.cpp GGUF, handy-computer, MIT): `whisper-tiny.en` (46 MB) → *"...open a full request"* · **`whisper-base.en` (85 MB, default)** → *"...open a pull request."* · `whisper-small.en` (270 MB) → *"...open a pull request."*
+- Cleanup (llama.cpp b9151): `qwen2.5-0.5b` (491 MB, Apache-2.0) → cleaned OK · **`qwen2.5-1.5b` (1.12 GB, default, Apache-2.0)** → cleaned OK · `phi-3-mini-4k` (2.39 GB, MIT) → cleaned OK. (Qwen2.5-3B deliberately excluded — its license is Qwen-Research, not permissive.)
+
+**Gates (all green, real evidence):**
+- `cargo check` clean · `cargo build --release` clean (2m20s) · `cargo test --release --lib` **59 passed / 0 failed / 5 ignored** · `tsc --noEmit` (desktop) clean · `vite build` clean.
+- **Keyless offline STT proof from the NEW Application Support location:** `env -u GROQ_API_KEY FUNBUTTON_TEST_WAV=… cargo test --release transcribes_real_wav_offline` → `"Refactor the auth middleware and open a pull request."`
+- macOS-26 regression grep: 4 matches, all doc comments.
+- **Quit path:** ordered `shutdown()` (latch downloads → cancel-all → kill+reap llama → free Metal) proven; a download in flight is cancelled with its `.part` preserved for resume; **6× quit across the startup window + mid-download quit → zero new `.ips`, zero `llama-server` orphans.**
+- **REAL RUNTIME PROOF** (installed to `/Applications`, clean model dir): app reported models **missing** → downloaded with live progress → **SHA-256 verified** (whisper 84,886,208 B; qwen 1,117,320,736 B) → whisper loaded (Metal, 83 ms) → `llama-server` came up (758 ms) → dictation pipeline run → `"Refactor the auth middleware and open a pull request."`; **resume** proven (quit mid-download, relaunch, `.part` resumed → verified → promoted). Full default set (~1.2 GB) downloaded + verified in ~2 min on this connection (qwen sustained ~36 MB/s).
+
+**Notes / follow-ups:** the live manifest URL 404s until this branch merges to `main` (the raw path doesn't exist there yet) — the baked-in fallback handled it correctly in every run. Installed app is now v0.1.7 on this Mac (replaced the running v0.1.6; its default models are downloaded and present).
+
 ## 2026-08-14 17:35 — v0.1.6 SHIPPED (branch `ship-v0.1.6`): the quit crash + the hotkey picker are finally in a public build
 
 **Both already-merged fixes (#4 ordered shutdown, #5 real hotkey picker) were stuck behind v0.1.5, which predates them. This release cuts them into a real, installed, QA'd build. Every gate green; the two headline fixes proven on a live `/Applications` install. Full trail in `RUNTIME-QA-v0.1.6.md`.**

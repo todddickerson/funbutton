@@ -1,6 +1,6 @@
 [package]
 name = "funbutton"
-version = "0.1.6"
+version = "0.1.7"
 description = "FunButton.ai — local-first voice dictation"
 authors = ["Todd Dickerson <todd@clickfunnels.com>"]
 edition = "2021"
@@ -61,6 +61,10 @@ tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "sync", 
 # clipboard + paste injection
 arboard = "=3.6.1"
 enigo = "=0.6.1"
+
+# model download integrity: pinned SHA-256 verification of every gguf
+sha2 = "=0.10.9"
+hex = "=0.4.3"
 
 # misc
 once_cell = "=1.21.3"

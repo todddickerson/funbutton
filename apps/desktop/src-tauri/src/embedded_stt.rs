@@ -1,7 +1,8 @@
-// Embedded on-device speech-to-text: whisper base.en (GGUF, Q8_0) via
-// transcribe-cpp — the same whisper.cpp/ggml wrapper Handy uses, statically
-// linked with the Metal backend on macOS. Loaded once at startup from the
-// bundled vendor dir; transcription is fully offline, zero API key.
+// Embedded on-device speech-to-text: a whisper GGUF (Q8_0) via transcribe-cpp
+// — the same whisper.cpp/ggml wrapper Handy uses, statically linked with the
+// Metal backend on macOS. The model is NOT bundled in the .app anymore; it's
+// downloaded on first run into Application Support and loaded from there (see
+// `crate::models`). Transcription is fully offline, zero API key.
 //
 // Groq Whisper remains available as an optional faster/cloud path via the
 // `stt_backend` setting — but this module is the default.
@@ -14,6 +15,10 @@ use std::sync::Arc;
 use std::time::Instant;
 use tauri::Emitter;
 
+/// Default STT model filename (matches the manifest default). Used by the
+/// offline test's path resolution; runtime path resolution goes through
+/// `crate::models`.
+#[allow(dead_code)]
 pub const BUNDLED_STT_MODEL_FILE: &str = "whisper-base.en-Q8_0.gguf";
 const WHISPER_SAMPLE_RATE: u32 = 16_000;
 /// whisper.cpp misbehaves on sub-second inputs; pad the tail with silence.
@@ -43,41 +48,6 @@ pub struct EmbeddedStt {
 
 pub type EmbeddedSttHandle = Arc<EmbeddedStt>;
 
-/// Locate the vendored GGUF: bundled resource dir first, then the dev tree.
-fn locate_model(app: &tauri::AppHandle) -> Result<PathBuf> {
-    use tauri::Manager as _;
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        let p = resource_dir
-            .join("vendor")
-            .join("whisper")
-            .join(BUNDLED_STT_MODEL_FILE);
-        if p.exists() {
-            return Ok(p);
-        }
-    }
-    let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
-    if !manifest.is_empty() {
-        let p = PathBuf::from(manifest)
-            .join("vendor")
-            .join("whisper")
-            .join(BUNDLED_STT_MODEL_FILE);
-        if p.exists() {
-            return Ok(p);
-        }
-    }
-    let cwd = std::env::current_dir()
-        .unwrap_or_default()
-        .join("vendor")
-        .join("whisper")
-        .join(BUNDLED_STT_MODEL_FILE);
-    if cwd.exists() {
-        return Ok(cwd);
-    }
-    Err(anyhow!(
-        "could not locate vendor/whisper/{BUNDLED_STT_MODEL_FILE} — run scripts/fetch-vendor-deps.sh"
-    ))
-}
-
 impl EmbeddedStt {
     pub fn new() -> EmbeddedSttHandle {
         Arc::new(EmbeddedStt {
@@ -90,16 +60,23 @@ impl EmbeddedStt {
         self.status.lock().clone()
     }
 
-    /// Spawn the model load on a dedicated thread. Emits
-    /// `funbutton:stt-ready` / `funbutton:stt-failed` when settled.
-    pub fn init(self: &Arc<Self>, app: &tauri::AppHandle) {
+    /// Spawn the model load on a dedicated thread from an explicit path (the
+    /// active STT model in Application Support, resolved by the caller via
+    /// `crate::models`). Emits `funbutton:stt-ready` / `funbutton:stt-failed`
+    /// when settled. Safe to call again to hot-swap models: resets to Starting
+    /// and unloads any prior session first (frees Metal before the new load).
+    pub fn init(self: &Arc<Self>, app: &tauri::AppHandle, path: PathBuf) {
         ensure_backends();
+        *self.status.lock() = SttStatus::Starting;
+        self.unload();
         let this = Arc::clone(self);
         let app = app.clone();
         std::thread::spawn(move || {
             let started = Instant::now();
             let result = (|| -> Result<transcribe_cpp::Session> {
-                let path = locate_model(&app)?;
+                if !path.exists() {
+                    return Err(anyhow!("STT model not present at {}", path.display()));
+                }
                 let backend = if transcribe_cpp::backend_available(transcribe_cpp::Backend::Metal) {
                     transcribe_cpp::Backend::Metal
                 } else {
@@ -348,18 +325,27 @@ mod tests {
         );
     }
 
-    /// End-to-end offline proof: bundled GGUF + real speech WAV → text.
-    /// Needs the vendor model and a WAV at $FUNBUTTON_TEST_WAV; run with:
+    /// End-to-end offline proof: on-device GGUF (from the NEW Application
+    /// Support model store) + real speech WAV → text. Resolves the model the
+    /// same way the app does — `crate::models::models_dir()` (honoring
+    /// `FUNBUTTON_MODELS_DIR`) — then falls back to the dev vendor tree so the
+    /// test also runs on a checkout before any download. Run with:
     /// `cargo test --release transcribes_real_wav_offline -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn transcribes_real_wav_offline() {
-        let model = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("vendor/whisper")
-            .join(BUNDLED_STT_MODEL_FILE);
+        // Prefer the Application Support store (what a shipped install uses).
+        let mut model = crate::models::models_dir().join(BUNDLED_STT_MODEL_FILE);
+        if !model.exists() {
+            // Dev fallback: the vendored copy.
+            model = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("vendor/whisper")
+                .join(BUNDLED_STT_MODEL_FILE);
+        }
         assert!(
             model.exists(),
-            "vendor model missing — run scripts/fetch-vendor-deps.sh"
+            "no whisper model at {} (download it via the app, set FUNBUTTON_MODELS_DIR, or run scripts/fetch-vendor-deps.sh)",
+            model.display()
         );
         let wav_path = std::env::var("FUNBUTTON_TEST_WAV").expect("set FUNBUTTON_TEST_WAV");
         let bytes = std::fs::read(&wav_path).expect("read test wav");
@@ -370,6 +356,26 @@ mod tests {
             .expect("transcribe");
         eprintln!("TRANSCRIPT: {text:?}");
         assert!(!text.trim().is_empty(), "expected non-empty transcript");
+        stt.unload();
+    }
+
+    /// Load-test an arbitrary whisper GGUF (path in FUNBUTTON_TEST_MODEL) and,
+    /// if FUNBUTTON_TEST_WAV is set, transcribe it. Used to verify curated STT
+    /// models beyond the default actually load with our transcribe-cpp version.
+    /// `cargo test --release loads_stt_model_from_env -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn loads_stt_model_from_env() {
+        let model = std::env::var("FUNBUTTON_TEST_MODEL").expect("set FUNBUTTON_TEST_MODEL");
+        let stt = EmbeddedStt::new();
+        stt.load_from_path(std::path::Path::new(&model))
+            .expect("load model");
+        if let Ok(wav) = std::env::var("FUNBUTTON_TEST_WAV") {
+            let bytes = std::fs::read(&wav).expect("read wav");
+            let text = stt.transcribe_wav(&bytes, None).expect("transcribe");
+            eprintln!("MODEL {model} → {text:?}");
+            assert!(!text.trim().is_empty(), "expected non-empty transcript");
+        }
         stt.unload();
     }
 

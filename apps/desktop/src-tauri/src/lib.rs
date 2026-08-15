@@ -12,6 +12,7 @@ mod hotkey;
 mod inject;
 mod keyboard;
 mod keychain;
+mod models;
 mod ollama;
 mod pipeline;
 mod state;
@@ -19,7 +20,9 @@ mod tray;
 
 use crate::audio::Recorder;
 use crate::hotkey::HotkeyEvent;
+use crate::models::Role;
 use crate::state::{AppState, AppStateHandle, HotkeyKind, Settings, Status};
+use std::path::PathBuf;
 
 use parking_lot::Mutex as PMutex;
 use serde::Serialize;
@@ -203,23 +206,340 @@ async fn ollama_check(state: tauri::State<'_, AppStateHandle>) -> Result<bool, S
     Ok(ollama::is_available(&url).await)
 }
 
-/// Status of the bundled on-device engines, polled by onboarding step 6 and
-/// the Settings backend hint. Each field is "ready" | "starting" | "failed".
-/// `stt` is the one that gates keyless dictation; `cleanup` always has the
-/// raw-passthrough fallback behind it.
+/// Honest per-role engine state, polled by onboarding and Settings. Each field
+/// is one of:
+///   "missing"     — the active model isn't downloaded yet
+///   "downloading" — a download for the active model is in flight
+///   "starting"    — model present, engine warming up
+///   "ready"       — engine loaded and serving
+///   "failed"      — model present but the engine couldn't load it
+/// `stt` gates keyless dictation; `cleanup` always has raw-passthrough behind it.
+pub(crate) fn engine_state(state: &AppStateHandle, role: Role) -> &'static str {
+    // Resolve the active model for this role, releasing the manifest/settings
+    // locks before touching engine state.
+    let entry = {
+        let manifest = state.manifest.lock();
+        let s = state.settings.lock();
+        let chosen = match role {
+            Role::Stt => &s.stt_model_id,
+            Role::Cleanup => &s.cleanup_model_id,
+        };
+        manifest.active_entry(role, chosen).cloned()
+    };
+    let Some(entry) = entry else {
+        return "missing";
+    };
+    if state.downloads.is_downloading(&entry.id) {
+        return "downloading";
+    }
+    if !models::is_installed(&entry) {
+        return "missing";
+    }
+    match role {
+        Role::Stt => match state.stt.status() {
+            crate::embedded_stt::SttStatus::Ready => "ready",
+            crate::embedded_stt::SttStatus::Failed(_) => "failed",
+            crate::embedded_stt::SttStatus::Starting => "starting",
+        },
+        Role::Cleanup => {
+            if state.embedded.lock().is_some() {
+                "ready"
+            } else if state.embedded_error.lock().is_some() {
+                "failed"
+            } else {
+                "starting"
+            }
+        }
+    }
+}
+
 #[tauri::command]
 fn embedded_check(state: tauri::State<'_, AppStateHandle>) -> serde_json::Value {
-    let cleanup = if state.embedded.lock().is_some() {
-        "ready"
-    } else if state.embedded_error.lock().is_some() {
-        "failed"
-    } else {
-        "starting"
-    };
     serde_json::json!({
-        "cleanup": cleanup,
-        "stt": state.stt.status().label(),
+        "cleanup": engine_state(&state, Role::Cleanup),
+        "stt": engine_state(&state, Role::Stt),
     })
+}
+
+// ---------------------------- Model manager ----------------------------
+
+#[derive(Serialize)]
+struct ModelStatus {
+    id: String,
+    role: &'static str,
+    name: String,
+    filename: String,
+    size_bytes: u64,
+    blurb: String,
+    license: String,
+    url: String,
+    installed: bool,
+    downloading: bool,
+    active: bool,
+    is_default: bool,
+    recommended: bool,
+}
+
+#[derive(Serialize)]
+struct ModelsView {
+    models: Vec<ModelStatus>,
+    models_dir: String,
+    disk_bytes: u64,
+}
+
+/// Resolved active model id for a role (the user's pick, else manifest default).
+fn active_id(state: &AppStateHandle, role: Role) -> Option<String> {
+    let manifest = state.manifest.lock();
+    let s = state.settings.lock();
+    let chosen = match role {
+        Role::Stt => &s.stt_model_id,
+        Role::Cleanup => &s.cleanup_model_id,
+    };
+    manifest.active_entry(role, chosen).map(|e| e.id.clone())
+}
+
+/// Path to the active model for a role, only if it's actually installed.
+fn resolve_model_path(state: &AppStateHandle, role: Role) -> Option<PathBuf> {
+    let manifest = state.manifest.lock();
+    let s = state.settings.lock();
+    let chosen = match role {
+        Role::Stt => &s.stt_model_id,
+        Role::Cleanup => &s.cleanup_model_id,
+    };
+    let e = manifest.active_entry(role, chosen)?;
+    if models::is_installed(e) {
+        Some(models::model_path(e))
+    } else {
+        None
+    }
+}
+
+/// (Re)load the on-device STT engine from the active model, if installed.
+fn reload_stt(app: &AppHandle, state: &AppStateHandle) {
+    if let Some(path) = resolve_model_path(state, Role::Stt) {
+        state.stt.init(app, path);
+    } else {
+        state.stt.unload();
+    }
+    tray::sync(app);
+}
+
+/// Store a freshly-started cleanup server, or reap it if a quit began while it
+/// was starting (so it can't outlive the app). The `shutting_down` check and
+/// the store happen under the `embedded` lock, which quit teardown also takes —
+/// so a server is either visible to teardown's kill, or killed here. Returns
+/// true if stored.
+fn store_or_reap_cleanup(state: &AppStateHandle, server: embedded_llm::EmbeddedServer) -> bool {
+    let mut guard = state.embedded.lock();
+    if state.shutting_down.load(Ordering::SeqCst) {
+        drop(guard);
+        server.kill();
+        false
+    } else {
+        *guard = Some(Arc::new(server));
+        true
+    }
+}
+
+/// (Re)start the llama-server cleanup engine on the active model, if installed.
+/// Kills any running server first. Async because `spawn` awaits /health.
+async fn reload_cleanup(app: &AppHandle, state: &AppStateHandle) {
+    // Kill the current server without holding the lock across the await below.
+    if let Some(srv) = state.embedded.lock().take() {
+        srv.kill();
+    }
+    *state.embedded_error.lock() = None;
+    let Some(path) = resolve_model_path(state, Role::Cleanup) else {
+        tray::sync(app);
+        return;
+    };
+    match embedded_llm::EmbeddedServer::spawn(app, path).await {
+        Ok(server) => {
+            let url = server.base_url().to_string();
+            if store_or_reap_cleanup(state, server) {
+                log::info!("cleanup engine reloaded at {url}");
+                let _ = app.emit("funbutton:embedded-ready", ());
+            } else {
+                log::info!("cleanup engine reaped: quit began during reload");
+            }
+        }
+        Err(e) => {
+            log::warn!("cleanup engine reload failed: {e:#}");
+            *state.embedded_error.lock() = Some(e.to_string());
+            let _ = app.emit("funbutton:embedded-failed", e.to_string());
+        }
+    }
+    tray::sync(app);
+}
+
+/// Download a model, then — if it's the active pick for its role — bring the
+/// engine up on it. Runs to completion in a spawned task.
+async fn download_and_maybe_activate(
+    app: AppHandle,
+    state: AppStateHandle,
+    entry: crate::models::ModelEntry,
+) {
+    let manager = Arc::clone(&state.downloads);
+    let res = models::download(app.clone(), manager, entry.clone()).await;
+    tray::sync(&app);
+    if res.is_ok() && active_id(&state, entry.role).as_deref() == Some(entry.id.as_str()) {
+        match entry.role {
+            Role::Stt => reload_stt(&app, &state),
+            Role::Cleanup => reload_cleanup(&app, &state).await,
+        }
+    }
+    let _ = app.emit("funbutton:models-changed", ());
+}
+
+/// List every manifest model with install / download / active state + disk use.
+#[tauri::command]
+fn models_list(state: tauri::State<'_, AppStateHandle>) -> ModelsView {
+    let manifest = state.manifest.lock().clone();
+    let stt_active = active_id(&state, Role::Stt);
+    let cleanup_active = active_id(&state, Role::Cleanup);
+    let models = manifest
+        .models
+        .iter()
+        .map(|e| {
+            let active = match e.role {
+                Role::Stt => stt_active.as_deref() == Some(e.id.as_str()),
+                Role::Cleanup => cleanup_active.as_deref() == Some(e.id.as_str()),
+            };
+            ModelStatus {
+                id: e.id.clone(),
+                role: e.role.label(),
+                name: e.name.clone(),
+                filename: e.filename.clone(),
+                size_bytes: e.size_bytes,
+                blurb: e.blurb.clone(),
+                license: e.license.clone(),
+                url: e.url.clone(),
+                installed: models::is_installed(e),
+                downloading: state.downloads.is_downloading(&e.id),
+                active,
+                is_default: e.default,
+                recommended: e.recommended,
+            }
+        })
+        .collect();
+    ModelsView {
+        models,
+        models_dir: models::models_dir().to_string_lossy().to_string(),
+        disk_bytes: models::disk_used(&manifest),
+    }
+}
+
+/// Start (or resume) a model download. Returns immediately; progress arrives on
+/// `funbutton:model-progress`. No-op if already downloading.
+#[tauri::command]
+fn models_download(
+    app: AppHandle,
+    state: tauri::State<'_, AppStateHandle>,
+    id: String,
+) -> Result<(), String> {
+    let entry = state.manifest.lock().entry(&id).cloned();
+    let Some(entry) = entry else {
+        return Err(format!("unknown model: {id}"));
+    };
+    if state.downloads.is_downloading(&id) {
+        return Ok(());
+    }
+    let state2 = state.inner().clone();
+    tauri::async_runtime::spawn(async move {
+        download_and_maybe_activate(app, state2, entry).await;
+    });
+    Ok(())
+}
+
+/// Cancel an in-flight download. The `.part` file stays so a later download
+/// resumes instead of restarting.
+#[tauri::command]
+fn models_cancel(state: tauri::State<'_, AppStateHandle>, id: String) {
+    state.downloads.cancel(&id);
+}
+
+/// Delete an installed model to free disk. If it was the active model for its
+/// role, the engine is torn down so status honestly reads "missing".
+#[tauri::command]
+fn models_delete(
+    app: AppHandle,
+    state: tauri::State<'_, AppStateHandle>,
+    id: String,
+) -> Result<u64, String> {
+    let entry = state
+        .manifest
+        .lock()
+        .entry(&id)
+        .cloned()
+        .ok_or_else(|| format!("unknown model: {id}"))?;
+    state.downloads.cancel(&id);
+    let freed = models::delete(&entry).map_err(|e| e.to_string())?;
+    if active_id(&state, entry.role).as_deref() == Some(entry.id.as_str()) {
+        match entry.role {
+            Role::Stt => state.stt.unload(),
+            Role::Cleanup => {
+                if let Some(srv) = state.embedded.lock().take() {
+                    srv.kill();
+                }
+            }
+        }
+    }
+    tray::sync(&app);
+    let _ = app.emit("funbutton:models-changed", ());
+    Ok(freed)
+}
+
+/// Choose the active model for a role (STT or cleanup). Persists the choice and
+/// reloads the engine on the new model (or leaves it "missing" if not yet
+/// downloaded).
+#[tauri::command]
+async fn models_set_active(
+    app: AppHandle,
+    state: tauri::State<'_, AppStateHandle>,
+    role: String,
+    id: String,
+) -> Result<(), String> {
+    let role = match role.as_str() {
+        "stt" => Role::Stt,
+        "cleanup" => Role::Cleanup,
+        other => return Err(format!("unknown role: {other}")),
+    };
+    {
+        let manifest = state.manifest.lock();
+        let e = manifest
+            .entry(&id)
+            .ok_or_else(|| format!("unknown model: {id}"))?;
+        if e.role != role {
+            return Err(format!("{id} is not a {} model", role.label()));
+        }
+    }
+    {
+        let mut s = state.settings.lock();
+        match role {
+            Role::Stt => s.stt_model_id = id.clone(),
+            Role::Cleanup => s.cleanup_model_id = id.clone(),
+        }
+        persist(&s).map_err(|e| e.to_string())?;
+    }
+    match role {
+        Role::Stt => reload_stt(&app, state.inner()),
+        Role::Cleanup => reload_cleanup(&app, state.inner()).await,
+    }
+    let _ = app.emit("funbutton:models-changed", ());
+    Ok(())
+}
+
+/// Refetch the live manifest (so new models added upstream appear without an
+/// app update). Falls back to the current copy on failure.
+#[tauri::command]
+async fn models_refresh_manifest(
+    app: AppHandle,
+    state: tauri::State<'_, AppStateHandle>,
+) -> Result<(), String> {
+    let fresh = models::fetch_manifest().await;
+    *state.manifest.lock() = fresh;
+    let _ = app.emit("funbutton:models-changed", ());
+    Ok(())
 }
 
 #[tauri::command]
@@ -665,6 +985,12 @@ pub fn run() {
             history_copy,
             history_purge_now,
             history_last_failed,
+            models_list,
+            models_download,
+            models_cancel,
+            models_delete,
+            models_set_active,
+            models_refresh_manifest,
         ])
         .setup(move |app| {
             // Menu bar app. Pill always hidden until recording. Settings hidden
@@ -712,23 +1038,47 @@ pub fn run() {
                 });
             }
 
-            // Load the bundled on-device whisper model in the background —
-            // this is what makes a fresh keyless install able to dictate.
-            app_state.stt.init(&app.handle().clone());
-
-            // Spawn the bundled local-inference server in the background.
-            // Loads ~1 s after the GGUF is in OS page cache; cold-start is a
-            // few seconds. The pipeline gracefully falls back to other
-            // backends if this is still spawning when the user dictates.
+            // Migrate any models still reachable in a previous bundled install
+            // into the Application Support store, so an upgrader doesn't
+            // re-download ~1.1 GB. Cheap (a few stat/hash checks) and a no-op
+            // when nothing is found — then the download flow takes over.
             {
+                let manifest_snapshot = app_state.manifest.lock().clone();
+                let migrated =
+                    models::migrate_from_bundle(&app.handle().clone(), &manifest_snapshot);
+                if !migrated.is_empty() {
+                    log::info!("migrated models from previous bundle: {migrated:?}");
+                }
+            }
+
+            // Load the on-device whisper model IF it's downloaded — this is what
+            // makes a keyless install dictate. If it's missing, we don't start
+            // the engine; onboarding / the model manager drive the download and
+            // then call reload_stt. Same story for cleanup below.
+            if let Some(stt_path) = resolve_model_path(&app_state, Role::Stt) {
+                app_state.stt.init(&app.handle().clone(), stt_path);
+            } else {
+                log::info!("STT model not present — awaiting download");
+            }
+
+            // Spawn the local-inference server in the background IF the cleanup
+            // model is downloaded. Cold-start is a few seconds; the pipeline
+            // falls back to other backends (or raw passthrough) if it isn't up.
+            if let Some(gguf) = resolve_model_path(&app_state, Role::Cleanup) {
                 let app_for_llm = app.handle().clone();
                 let state_for_llm = Arc::clone(&app_state);
                 tauri::async_runtime::spawn(async move {
-                    match embedded_llm::EmbeddedServer::spawn(&app_for_llm).await {
+                    match embedded_llm::EmbeddedServer::spawn(&app_for_llm, gguf).await {
                         Ok(server) => {
-                            log::info!("embedded llama-server ready at {}", server.base_url());
-                            *state_for_llm.embedded.lock() = Some(std::sync::Arc::new(server));
-                            let _ = app_for_llm.emit("funbutton:embedded-ready", ());
+                            let url = server.base_url().to_string();
+                            if store_or_reap_cleanup(&state_for_llm, server) {
+                                log::info!("embedded llama-server ready at {url}");
+                                let _ = app_for_llm.emit("funbutton:embedded-ready", ());
+                            } else {
+                                log::info!(
+                                    "embedded llama-server reaped: quit began during startup"
+                                );
+                            }
                             tray::sync(&app_for_llm);
                         }
                         Err(e) => {
@@ -736,6 +1086,73 @@ pub fn run() {
                             *state_for_llm.embedded_error.lock() = Some(e.to_string());
                             let _ = app_for_llm.emit("funbutton:embedded-failed", e.to_string());
                             tray::sync(&app_for_llm);
+                        }
+                    }
+                });
+            } else {
+                log::info!("cleanup model not present — awaiting download");
+            }
+
+            // Refresh the model manifest from the network in the background so
+            // models added upstream appear without an app update. Baked-in copy
+            // is already loaded, so this is best-effort.
+            {
+                let app_for_manifest = app.handle().clone();
+                let state_for_manifest = Arc::clone(&app_state);
+                tauri::async_runtime::spawn(async move {
+                    let fresh = models::fetch_manifest().await;
+                    *state_for_manifest.manifest.lock() = fresh;
+                    let _ = app_for_manifest.emit("funbutton:models-changed", ());
+                });
+            }
+
+            // Headless first-run proof: FUNBUTTON_SELFTEST_DOWNLOAD=1 kicks off
+            // the default-model downloads (the exact path the onboarding
+            // "Download models" button uses), waits for the on-device engines
+            // to come up, then — if FUNBUTTON_SELFTEST_WAV is set — fires one
+            // synthetic dictation so the full pipeline can be exercised from a
+            // terminal launch. Env-gated; no-op in normal runs.
+            if std::env::var("FUNBUTTON_SELFTEST_DOWNLOAD").as_deref() == Ok("1") {
+                let app_h = app.handle().clone();
+                let state_h = Arc::clone(&app_state);
+                tauri::async_runtime::spawn(async move {
+                    let defaults: Vec<_> = {
+                        let m = state_h.manifest.lock();
+                        m.models.iter().filter(|e| e.default).cloned().collect()
+                    };
+                    for e in defaults {
+                        if !models::is_installed(&e) {
+                            log::info!("selftest-download: fetching {}", e.id);
+                            download_and_maybe_activate(app_h.clone(), Arc::clone(&state_h), e)
+                                .await;
+                        }
+                    }
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1800);
+                    loop {
+                        let stt = engine_state(&state_h, Role::Stt);
+                        let cl = engine_state(&state_h, Role::Cleanup);
+                        log::info!("selftest-download: waiting — stt={stt} cleanup={cl}");
+                        if stt == "ready" && matches!(cl, "ready" | "failed") {
+                            break;
+                        }
+                        if std::time::Instant::now() > deadline {
+                            log::warn!("selftest-download: readiness timeout");
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    }
+                    if std::env::var("FUNBUTTON_SELFTEST_WAV")
+                        .map(|v| !v.is_empty())
+                        .unwrap_or(false)
+                    {
+                        // Clone the Sender out and drop the (non-Send) guard
+                        // before any await so the task stays Send.
+                        let tx = state_h.hotkey_tx.lock().clone();
+                        if let Some(tx) = tx {
+                            log::info!("selftest-download: firing synthetic dictation");
+                            let _ = tx.send(HotkeyEvent::Down);
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            let _ = tx.send(HotkeyEvent::Up);
                         }
                     }
                 });
@@ -845,6 +1262,13 @@ pub(crate) fn shutdown(app: &AppHandle) {
     state.capture.active.store(false, Ordering::SeqCst);
     *state.capture.tx.lock() = None;
 
+    // (a.5) Cancel any in-flight model downloads. Each streaming loop checks
+    // its cancel flag between chunks and unwinds promptly; the partial `.part`
+    // file is left in place so the next launch resumes instead of restarting.
+    if catch_unwind(AssertUnwindSafe(|| state.downloads.cancel_all())).is_err() {
+        log::error!("shutdown: download cancel panicked (continuing)");
+    }
+
     // (b) Kill + reap the llama-server child so it can't orphan.
     if catch_unwind(AssertUnwindSafe(|| {
         if let Some(srv) = state.embedded.lock().take() {
@@ -854,6 +1278,13 @@ pub(crate) fn shutdown(app: &AppHandle) {
     .is_err()
     {
         log::error!("shutdown: llama-server kill panicked (continuing)");
+    }
+    // A quit landing while llama-server was still starting means its handle
+    // never reached AppState, so the take() above missed it. Latch "no new
+    // servers" and SIGKILL any registered-but-unstored child — serialized
+    // against the spawn path so a child can't slip through after this runs.
+    if catch_unwind(AssertUnwindSafe(embedded_llm::begin_shutdown_and_reap)).is_err() {
+        log::error!("shutdown: llama-server orphan reap panicked (continuing)");
     }
 
     // (c) Unload the whisper/Metal context while Metal is still alive.

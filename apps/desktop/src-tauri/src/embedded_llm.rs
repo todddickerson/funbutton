@@ -7,50 +7,86 @@
 // Groq account, no Ollama install, no internet required for cleanup.
 
 use anyhow::{anyhow, Context as _, Result};
+use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub const BUNDLED_MODEL_FILE: &str = "qwen2.5-1.5b-instruct-q4_k_m.gguf";
 const SERVER_BIN: &str = "llama-server";
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
 
-/// Locates the vendored llama-server binary + GGUF. Returns (server_path, gguf_path).
+/// Process-wide registry of live llama-server child PIDs, recorded the instant
+/// each child is spawned — BEFORE the /health poll finishes and before the
+/// `EmbeddedServer` handle is stored in `AppState`. Quit teardown drains this
+/// to reap any child whose startup was still in flight (its handle never made
+/// it into `AppState`, so the normal handle-kill would miss it and orphan it).
+static LLAMA_PIDS: Lazy<Mutex<Vec<u32>>> = Lazy::new(|| Mutex::new(Vec::new()));
+
+/// Serializes "am I shutting down? if not, spawn + register the child" against
+/// "set shutting-down + reap". Held only around the cheap spawn/register (never
+/// across the /health poll), so it can't stall startup. This is what makes
+/// orphaning impossible: a spawn either registers its PID before the reap sees
+/// it, or observes `SHUTTING_DOWN` and never spawns at all.
+static SPAWN_GATE: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
+
+/// Quit-teardown entry point: latch "no new servers", then SIGKILL every
+/// llama-server child still registered as live. Under `SPAWN_GATE`, so a spawn
+/// racing this either already registered its PID (reaped here) or will see the
+/// latch and skip. Idempotent.
+pub fn begin_shutdown_and_reap() {
+    let _gate = SPAWN_GATE.lock();
+    SHUTTING_DOWN.store(true, Ordering::SeqCst);
+    let pids: Vec<u32> = LLAMA_PIDS.lock().drain(..).collect();
+    for pid in pids {
+        log::warn!("reaping orphaned llama-server pid {pid}");
+        let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
+    }
+}
+
+/// Locates the bundled llama-server binary (still shipped inside the .app — it's
+/// small, signed runtime code). The GGUF is NO LONGER bundled; it's downloaded
+/// into Application Support and passed to `spawn` by the caller.
 ///
-/// In development (`cargo run` / `tauri dev`) the path resolves to
+/// In development (`cargo run` / `tauri dev`) it resolves to
 /// `src-tauri/vendor/llama/`. In a bundled app it resolves to
-/// `Contents/Resources/_up_/vendor/llama/` via Tauri's resource API.
-fn locate_vendor(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf)> {
+/// `Contents/Resources/vendor/llama/` via Tauri's resource API.
+fn locate_server_bin(app: &tauri::AppHandle) -> Result<PathBuf> {
     use tauri::Manager as _;
     // Bundled app: Tauri copies declared resources under Contents/Resources/.
     if let Ok(resource_dir) = app.path().resource_dir() {
-        let bundled = resource_dir.join("vendor").join("llama");
-        if bundled.join(SERVER_BIN).exists() {
-            return Ok((bundled.join(SERVER_BIN), bundled.join(BUNDLED_MODEL_FILE)));
+        let bundled = resource_dir.join("vendor").join("llama").join(SERVER_BIN);
+        if bundled.exists() {
+            return Ok(bundled);
         }
     }
     // Dev: walk up from CARGO_MANIFEST_DIR to find src-tauri/vendor/llama.
     let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
     if !manifest.is_empty() {
-        let dev = PathBuf::from(manifest).join("vendor").join("llama");
-        if dev.join(SERVER_BIN).exists() {
-            return Ok((dev.join(SERVER_BIN), dev.join(BUNDLED_MODEL_FILE)));
+        let dev = PathBuf::from(manifest)
+            .join("vendor")
+            .join("llama")
+            .join(SERVER_BIN);
+        if dev.exists() {
+            return Ok(dev);
         }
     }
     // Last resort: try CWD-relative.
     let cwd = std::env::current_dir()
         .unwrap_or_default()
         .join("vendor")
-        .join("llama");
-    if cwd.join(SERVER_BIN).exists() {
-        return Ok((cwd.join(SERVER_BIN), cwd.join(BUNDLED_MODEL_FILE)));
+        .join("llama")
+        .join(SERVER_BIN);
+    if cwd.exists() {
+        return Ok(cwd);
     }
     Err(anyhow!(
-        "could not locate vendor/llama — run scripts/fetch-vendor-deps.sh"
+        "could not locate the bundled llama-server binary (vendor/llama/{SERVER_BIN})"
     ))
 }
 
@@ -63,6 +99,9 @@ fn pick_free_port() -> Result<u16> {
 pub struct EmbeddedServer {
     base_url: String,
     child: Mutex<Option<Child>>,
+    /// The child's PID, also registered in `LLAMA_PIDS` so quit teardown can
+    /// reap it even if this handle never reached `AppState`.
+    pid: u32,
 }
 
 impl EmbeddedServer {
@@ -70,13 +109,14 @@ impl EmbeddedServer {
         &self.base_url
     }
 
-    /// Spawn llama-server pointing at the bundled GGUF. Returns once /health
+    /// Spawn llama-server pointing at `gguf` (the active cleanup model in
+    /// Application Support, resolved by the caller). Returns once /health
     /// responds 200 or after STARTUP_TIMEOUT.
-    pub async fn spawn(app: &tauri::AppHandle) -> Result<Self> {
-        let (bin, gguf) = locate_vendor(app)?;
+    pub async fn spawn(app: &tauri::AppHandle, gguf: PathBuf) -> Result<Self> {
+        let bin = locate_server_bin(app)?;
         if !gguf.exists() {
             return Err(anyhow!(
-                "bundled GGUF not found at {} — run scripts/fetch-vendor-deps.sh",
+                "cleanup model not present at {} — download it in Settings → Models",
                 gguf.display()
             ));
         }
@@ -87,30 +127,44 @@ impl EmbeddedServer {
             gguf.display()
         );
 
-        // Flags: short ctx (cleanup is bounded), no warmup spam, OpenAI-compatible
-        // chat at /v1/chat/completions enabled by default.
-        let child = Command::new(&bin)
-            .arg("--host")
-            .arg("127.0.0.1")
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--model")
-            .arg(&gguf)
-            .arg("--ctx-size")
-            .arg("4096")
-            .arg("--threads")
-            .arg(num_threads().to_string())
-            .arg("--no-webui") // skip the bundled chat UI
-            .arg("--log-disable") // we capture via stdout/stderr inheritance instead
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .stdin(Stdio::null())
-            .spawn()
-            .with_context(|| format!("spawn llama-server at {}", bin.display()))?;
+        // Spawn + PID-register under SPAWN_GATE, checking the shutdown latch
+        // inside the lock. If teardown already began, don't spawn at all — this
+        // is what closes the "child created after the reap ran" race. The gate
+        // is released before the /health poll, so startup latency is unchanged.
+        let (child, pid) = {
+            let _gate = SPAWN_GATE.lock();
+            if SHUTTING_DOWN.load(Ordering::SeqCst) {
+                return Err(anyhow!("app is shutting down — not starting llama-server"));
+            }
+            // Flags: short ctx (cleanup is bounded), no warmup spam,
+            // OpenAI-compatible chat at /v1/chat/completions enabled by default.
+            let child = Command::new(&bin)
+                .arg("--host")
+                .arg("127.0.0.1")
+                .arg("--port")
+                .arg(port.to_string())
+                .arg("--model")
+                .arg(&gguf)
+                .arg("--ctx-size")
+                .arg("4096")
+                .arg("--threads")
+                .arg(num_threads().to_string())
+                .arg("--no-webui") // skip the bundled chat UI
+                .arg("--log-disable") // we capture via stdout/stderr inheritance instead
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .stdin(Stdio::null())
+                .spawn()
+                .with_context(|| format!("spawn llama-server at {}", bin.display()))?;
+            let pid = child.id();
+            LLAMA_PIDS.lock().push(pid);
+            (child, pid)
+        };
 
         let server = EmbeddedServer {
             base_url: base_url.clone(),
             child: Mutex::new(Some(child)),
+            pid,
         };
 
         // Poll /health until ready (or timeout). Server takes a few seconds on
@@ -208,6 +262,9 @@ impl EmbeddedServer {
             let _ = c.kill();
             let _ = c.wait();
         }
+        // Deregister so quit teardown's orphan sweep doesn't try to re-kill a
+        // PID we've already reaped (which could by then belong to something else).
+        LLAMA_PIDS.lock().retain(|&p| p != self.pid);
     }
 }
 

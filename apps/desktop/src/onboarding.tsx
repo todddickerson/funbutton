@@ -3,13 +3,14 @@ import type { ReactNode } from "react";
 import ReactDOM from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { ClipboardPaste, Keyboard as KeyboardIcon, Lock, Mic, Zap } from "lucide-react";
+import { ClipboardPaste, HardDriveDownload, Keyboard as KeyboardIcon, Lock, Mic, RotateCw, Zap } from "lucide-react";
 import "./onboarding.css";
 import { HotkeyPicker } from "./HotkeyPicker";
 import { hotkeyHold, type HotkeyKind } from "./hotkeys";
+import { type ModelStatus, type ModelProgress, fmtBytes, fmtSpeed, fmtEta } from "./models";
 
 type Backend = "auto" | "groq" | "local";
-type EngineStatus = "starting" | "ready" | "failed";
+type EngineStatus = "missing" | "downloading" | "starting" | "ready" | "failed";
 interface EmbeddedStatus { cleanup: EngineStatus; stt: EngineStatus }
 
 interface Settings {
@@ -26,7 +27,7 @@ interface Settings {
 
 type PermState = "unknown" | "granted" | "denied" | "checking";
 
-const STEP_NAMES = ["hello", "switches", "mic", "paste", "your key", "engines", "go"];
+const STEP_NAMES = ["hello", "switches", "mic", "paste", "your key", "models", "go"];
 
 function App() {
   const [step, setStep] = useState(1);
@@ -41,7 +42,9 @@ function App() {
   const [groqState, setGroqState] = useState<"idle" | "checking" | "ok" | "bad">("idle");
   const [groqError, setGroqError] = useState<string>("");
   const [ollamaUp, setOllamaUp] = useState<boolean | null>(null);
-  const [embedded, setEmbedded] = useState<EmbeddedStatus>({ cleanup: "starting", stt: "starting" });
+  const [embedded, setEmbedded] = useState<EmbeddedStatus>({ cleanup: "missing", stt: "missing" });
+  const [models, setModels] = useState<ModelStatus[]>([]);
+  const [modelProg, setModelProg] = useState<Record<string, ModelProgress>>({});
 
   const [hotkeyKind, setHotkeyKind] = useState<HotkeyKind>("fn");
 
@@ -110,9 +113,18 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [micPerm, accPerm, imPerm, step]);
 
-  // Backend probes on step 6 — poll every 1.5s so the bundled model's
-  // "warming up → ready" transition (and a just-started `ollama serve`)
-  // shows up live, same pattern as the permission steps.
+  // Live model-download progress — keyed by model id. Subscribed for the whole
+  // wizard so a download kicked off on the models step keeps reporting even if
+  // the user flips to the demo step and back.
+  useEffect(() => {
+    const un = listen<ModelProgress>("funbutton:model-progress", (e) => {
+      setModelProg((p) => ({ ...p, [e.payload.id]: e.payload }));
+    });
+    return () => { un.then((u) => u()); };
+  }, []);
+
+  // Backend probes on the models step — poll every 1.2s so download → verify →
+  // "engine ready" transitions (and a just-started `ollama serve`) show up live.
   useEffect(() => {
     if (step !== 6) return;
     let cancelled = false;
@@ -123,9 +135,12 @@ function App() {
       invoke<EmbeddedStatus>("embedded_check")
         .then((v) => { if (!cancelled) setEmbedded(v); })
         .catch(() => { if (!cancelled) setEmbedded({ cleanup: "failed", stt: "failed" }); });
+      invoke<{ models: ModelStatus[] }>("models_list")
+        .then((v) => { if (!cancelled) setModels(v.models); })
+        .catch(() => {});
     };
     tick();
-    const id = setInterval(tick, 1500);
+    const id = setInterval(tick, 1200);
     return () => { cancelled = true; clearInterval(id); };
   }, [step]);
 
@@ -207,6 +222,20 @@ function App() {
     await persistPartial({ hotkey_kind: kind });
   }
 
+  async function downloadDefaults() {
+    // Kick off both required models at once; the Rust side downloads them
+    // concurrently and starts each engine as its model verifies.
+    for (const m of models.filter((x) => x.is_default)) {
+      await invoke("models_download", { id: m.id }).catch(() => {});
+    }
+  }
+  async function retryModel(id: string) {
+    await invoke("models_download", { id }).catch(() => {});
+  }
+  async function cancelModel(id: string) {
+    await invoke("models_cancel", { id }).catch(() => {});
+  }
+
   async function finish() {
     // One merged write, one save_settings call — nothing races, nothing
     // gets dropped. A known-bad key is the only thing we refuse to keep.
@@ -283,6 +312,11 @@ function App() {
             onValidate={validateAndSaveGroq}
             ollamaUp={ollamaUp}
             embedded={embedded}
+            models={models}
+            modelProg={modelProg}
+            onDownloadAll={downloadDefaults}
+            onRetry={retryModel}
+            onCancel={cancelModel}
             onNext={() => goto(7)}
           />
         )}
@@ -537,69 +571,140 @@ function HotkeyStep({
   );
 }
 
-/** One engine in the ignition panel: node lights, energy travels, then locks green. */
-function IgnitionRow({ label, engine, status }: { label: string; engine: string; status: EngineStatus }) {
+/** One required model on the download step: name, size, live progress bar. */
+function ModelDlRow({
+  label, model, prog, engine, onRetry, onCancel,
+}: {
+  label: string;
+  model: ModelStatus | undefined;
+  prog: ModelProgress | undefined;
+  engine: EngineStatus;
+  onRetry: (id: string) => void;
+  onCancel: (id: string) => void;
+}) {
+  if (!model) {
+    return (
+      <div className="ob-ign-row starting">
+        <span className="ob-ign-node" />
+        <span className="ob-ign-label">{label}<em>resolving…</em></span>
+        <span className="ob-ign-track"><span className="ob-ign-fill" /></span>
+        <span className="ob-ign-status">…</span>
+      </div>
+    );
+  }
+  const verifying = prog?.status === "verifying";
+  const downloading = engine === "downloading" || prog?.status === "downloading" || verifying;
+  const errored = prog?.status === "error";
+  const ready = engine === "ready" || (model.installed && !downloading && !errored);
+  const pct = prog && prog.total > 0 ? Math.min(100, Math.round((prog.downloaded / prog.total) * 100)) : 0;
+  const cls = ready ? "ready" : errored ? "failed" : downloading ? "downloading" : "starting";
+
   return (
-    <div className={`ob-ign-row ${status}`}>
-      <span className="ob-ign-node">{status === "ready" ? "✓" : ""}</span>
+    <div className={`ob-ign-row ${cls}`}>
+      <span className="ob-ign-node">{ready ? "✓" : ""}</span>
       <span className="ob-ign-label">
         {label}
-        <em>{engine}</em>
+        <em>{model.name} · {fmtBytes(model.size_bytes)}</em>
       </span>
-      <span className="ob-ign-track"><span className="ob-ign-fill" /></span>
+      <span className="ob-ign-track">
+        <span className="ob-ign-fill" style={downloading && !verifying ? { width: `${pct}%` } : undefined} />
+      </span>
       <span className="ob-ign-status">
-        {status === "ready" ? "online" : status === "failed" ? "offline" : "warming"}
+        {ready ? "ready"
+          : verifying ? "verifying"
+          : errored ? "failed"
+          : downloading ? `${pct}%`
+          : engine === "starting" ? "loading"
+          : "queued"}
       </span>
+      {downloading && !verifying && (
+        <span className="ob-ign-sub">
+          {fmtSpeed(prog?.speed_bps ?? 0)} · {fmtEta(prog?.eta_secs ?? 0)} left
+          <button className="ob-ign-x" onClick={() => onCancel(model.id)} aria-label="cancel">×</button>
+        </span>
+      )}
+      {errored && (
+        <span className="ob-ign-sub err">
+          {prog?.error?.includes("sha256") ? "corrupt — retry" : "download failed"}
+          <button className="ob-ign-retry" onClick={() => onRetry(model.id)}><RotateCw size={11} /> retry</button>
+        </span>
+      )}
     </div>
   );
 }
 
 function Step6({
-  groqKey, setGroqKey, groqState, groqError, onValidate, ollamaUp, embedded, onNext,
+  groqKey, setGroqKey, groqState, groqError, onValidate, ollamaUp, embedded,
+  models, modelProg, onDownloadAll, onRetry, onCancel, onNext,
 }: {
   groqKey: string; setGroqKey: (v: string) => void;
   groqState: "idle" | "checking" | "ok" | "bad"; groqError: string;
   onValidate: () => void; ollamaUp: boolean | null;
   embedded: EmbeddedStatus;
+  models: ModelStatus[];
+  modelProg: Record<string, ModelProgress>;
+  onDownloadAll: () => void;
+  onRetry: (id: string) => void;
+  onCancel: (id: string) => void;
   onNext: () => void;
 }) {
+  const sttModel = models.find((m) => m.role === "stt" && m.is_default);
+  const cleanupModel = models.find((m) => m.role === "cleanup" && m.is_default);
+  const defaults = models.filter((m) => m.is_default);
+  const totalBytes = defaults.reduce((s, m) => s + m.size_bytes, 0);
+
+  const anyDownloading = defaults.some(
+    (m) => m.downloading || ["downloading", "verifying"].includes(modelProg[m.id]?.status ?? "")
+  );
+  const allInstalled = defaults.length > 0 && defaults.every((m) => m.installed);
+  const notStarted = !anyDownloading && defaults.some((m) => !m.installed);
+  const anyErrored = defaults.some((m) => modelProg[m.id]?.status === "error");
+
+  // Aggregate % across both required models, weighted by size.
+  const dlBytes = defaults.reduce((s, m) => {
+    if (m.installed) return s + m.size_bytes;
+    const p = modelProg[m.id];
+    return s + (p ? Math.min(p.downloaded, m.size_bytes) : 0);
+  }, 0);
+  const aggPct = totalBytes > 0 ? Math.min(100, Math.round((dlBytes / totalBytes) * 100)) : 0;
+
   const ready = embedded.stt === "ready" || groqState === "ok";
-  const bothReady = embedded.stt === "ready" && embedded.cleanup === "ready";
-  const anyFailed = embedded.stt === "failed" || embedded.cleanup === "failed";
-  const overall = bothReady ? "ready" : anyFailed ? "failed" : "starting";
-  // The optional paths live behind a disclosure so the slide fits 720x520.
-  // If an on-device engine dies, the fallback IS the path — pop it open.
+  const overall = allInstalled && embedded.stt === "ready" ? "ready" : anyErrored ? "failed" : anyDownloading ? "downloading" : "idle";
+
+  // The cloud/Ollama alternatives live behind a disclosure so the slide fits.
   const [altOpen, setAltOpen] = useState(false);
-  useEffect(() => { if (anyFailed) setAltOpen(true); }, [anyFailed]);
   return (
     <section className="ob-slide compact">
-      <h1 className="ob-h1 small">No API key. No account. Ever.</h1>
+      <h1 className="ob-h1 small">One download. Then it&apos;s yours offline.</h1>
       <p className="ob-sub small">
-        Whisper hears you. Qwen tidies it up. All on this Mac, even on a plane.
+        The app is tiny — the brains download once (~{fmtBytes(totalBytes)}) into Application Support,
+        never inside the app. No account, no key. After this, it works on a plane.
       </p>
       <div className={`ob-ignition ${overall}`}>
         <div className="ob-ign-head">
-          <span>on-device engines</span>
+          <span>on-device models</span>
           <span className={`ob-ign-overall ${overall}`}>
-            {overall === "ready" ? "all systems go" : overall === "failed" ? "needs a fallback" : "igniting…"}
+            {overall === "ready" ? "downloaded · SHA verified"
+              : overall === "failed" ? "a download failed"
+              : overall === "downloading" ? `downloading · ${aggPct}%`
+              : "not downloaded yet"}
           </span>
         </div>
-        <IgnitionRow label="speech-to-text" engine="whisper · local" status={embedded.stt} />
-        <IgnitionRow label="cleanup" engine="qwen 2.5 · local" status={embedded.cleanup} />
-        {overall === "failed" && (
+        <ModelDlRow label="speech-to-text" model={sttModel} prog={sttModel ? modelProg[sttModel.id] : undefined} engine={embedded.stt} onRetry={onRetry} onCancel={onCancel} />
+        <ModelDlRow label="cleanup" model={cleanupModel} prog={cleanupModel ? modelProg[cleanupModel.id] : undefined} engine={embedded.cleanup} onRetry={onRetry} onCancel={onCancel} />
+        {notStarted && (
+          <button className="ob-btn primary ob-ign-dl" onClick={onDownloadAll}>
+            <HardDriveDownload size={15} /> Download models (~{fmtBytes(totalBytes)})
+          </button>
+        )}
+        {anyErrored && !anyDownloading && (
           <p className="ob-ign-fallback">
-            {embedded.stt === "failed"
-              ? "On-device speech-to-text couldn't start. Paste a Groq key below to dictate."
-              : "On-device cleanup couldn't start. Dictation still works. Add a Groq key or Ollama for cleanup."}
+            A model download failed or was corrupt. Retry it above — or paste a Groq key below to dictate over the cloud while you sort it out.
           </p>
         )}
       </div>
-      <details
-        className="ob-alt"
-        open={altOpen}
-        onToggle={(e) => setAltOpen(e.currentTarget.open)}
-      >
-        <summary>optional: faster cloud (Groq) or your own Ollama — we never see a key</summary>
+      <details className="ob-alt" open={altOpen} onToggle={(e) => setAltOpen(e.currentTarget.open)}>
+        <summary>prefer cloud, or already run Ollama? set it up instead — we never see a key</summary>
         <div className={`ob-alt-row ${groqState === "ok" ? "good" : ""}`}>
           <span className="ob-alt-tag"><Zap size={11} /> fast</span>
           <input
@@ -629,7 +734,7 @@ function Step6({
       </details>
       <div className="ob-cta-row tight">
         <button className="ob-btn primary" onClick={onNext} disabled={!ready}>
-          {ready ? "Try it now →" : "waiting for an engine…"}
+          {ready ? "Try it now →" : anyDownloading ? `downloading… ${aggPct}%` : "download a model to continue"}
         </button>
         <button className="ob-link" onClick={onNext}>I&apos;ll set this up later →</button>
       </div>
