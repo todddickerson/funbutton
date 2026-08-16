@@ -146,8 +146,10 @@ function Hero() {
       </div>
 
       <p className="mt-4 font-mono text-[11px] text-neutral-600 max-w-xl leading-relaxed">
-        Free tier is fully offline out of the box: bundled Whisper + Qwen. GPLv3 — read every
-        line before it reads you.
+        A <span className="text-neutral-300">~17 MB</span> download — not the 1.2 GB
+        the other guys ship. The on-device models (Whisper + a cleanup LLM, ~1.1 GB) fetch
+        once on first run, SHA-verified, then it&apos;s fully offline forever. GPLv3 — read
+        every line before it reads you.
       </p>
 
       {/* the Fn-key gag, rendered */}
@@ -328,12 +330,12 @@ function HowItWorks() {
     {
       n: "02",
       title: "Whisper transcribes",
-      body: "On your Mac, with a bundled model. Zero setup, zero key. Works on a plane.",
+      body: "On your Mac, with an on-device model you grab once on first run. Zero key. Works on a plane after that.",
     },
     {
       n: "03",
-      title: "Qwen cleans it up",
-      body: "A bundled local model kills the fillers, resolves your self-corrections, and formats per mode: code, commit, prose.",
+      title: "A local LLM cleans it up",
+      body: "An on-device model kills the fillers, resolves your self-corrections, and formats per mode: code, commit, prose. Swap it for a smaller/faster or bigger/sharper one any time.",
     },
     {
       n: "04",
@@ -372,8 +374,9 @@ function Comparison() {
   const rows: [string, string, string, string, string][] = [
     ["Price", "$0 · $149 lifetime", "$0", "$25–49 lifetime", "$12–15/mo, forever"],
     ["License", "GPLv3", "MIT", "GPLv3", "closed"],
-    ["Works offline", "out of the box", "yes", "yes", "no"],
-    ["AI cleanup on-device", "bundled, default", "optional", "optional (cloud text)", "cloud only"],
+    ["Download size", "~17 MB app", "app + model", "app + model", "cloud"],
+    ["Works offline", "after first-run models", "yes", "yes", "no"],
+    ["AI cleanup on-device", "on-device, default", "optional", "optional (cloud text)", "cloud only"],
     ["API key or account", "never", "never", "never", "account required"],
     ["Dev-first defaults", "the whole point", "generic dictation", "generic Power Mode", "generic prose"],
     ["Stack", "Tauri + Rust", "Tauri + Rust", "Swift", "closed"],
@@ -481,7 +484,10 @@ function OpenSourceInstall() {
             <p className="text-neutral-600 mt-2">
               # 3. grant Microphone · Accessibility · Input Monitoring
             </p>
-            <p className="text-neutral-600 mt-2"># 4. hold fn. talk. done.</p>
+            <p className="text-neutral-600 mt-2">
+              # 4. first run downloads the models (~1.1 GB, SHA-verified)
+            </p>
+            <p className="text-neutral-600 mt-2"># 5. hold fn. talk. done.</p>
           </div>
         </div>
       </div>
@@ -650,10 +656,10 @@ function PricingSection() {
           price="$0"
           period="forever"
           features={[
-            "Fully local: bundled Whisper + Qwen",
+            "Fully local: on-device Whisper + LLM",
+            "~17 MB app · models download on first run",
             "Unlimited usage, or BYO Groq / Ollama",
             "GPLv3 — open source desktop",
-            "No cap, no card, no cloud lock-in",
           ]}
           cta="Download alpha"
           ctaHref={DMG_URL}

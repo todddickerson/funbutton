@@ -554,6 +554,55 @@ body {
   50% { opacity: 0.35; }
 }
 
+/* downloading a model: real determinate progress (inline width) on the rail */
+.ob-ignition.downloading { border-color: rgba(255,92,138,0.35); }
+.ob-ign-overall.downloading { color: #ff6b96; animation: ob-pulse 1.4s ease-in-out infinite; }
+.ob-ign-row.downloading .ob-ign-node { border-color: #ff5c8a; }
+.ob-ign-row.downloading .ob-ign-fill {
+  background: linear-gradient(90deg, #dd2054, #ff5c8a);
+  transition: width 0.3s ease;
+}
+.ob-ign-row.downloading .ob-ign-status { color: #ff6b96; font-weight: 700; }
+/* per-row sub line: speed/ETA + cancel, or the error + retry. Full-width row. */
+.ob-ign-sub {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 1px 0 3px;
+  padding-left: 26px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9.5px;
+  color: #8a8a8a;
+  letter-spacing: 0.03em;
+}
+.ob-ign-sub.err { color: #ff9966; }
+.ob-ign-x,
+.ob-ign-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: transparent;
+  color: #aaa;
+  border-radius: 5px;
+  padding: 1px 6px;
+  font-size: 9.5px;
+  cursor: pointer;
+  line-height: 1.5;
+}
+.ob-ign-x:hover,
+.ob-ign-retry:hover { color: #fff; border-color: rgba(255,255,255,0.4); }
+.ob-ign-x { border: none; font-size: 13px; padding: 0 2px; }
+/* the "Download models" primary CTA that lives inside the ignition panel */
+.ob-ign-dl {
+  margin-top: 10px;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* --------------------------------------- step 6: optional-paths disclosure */
 .ob-alt {
   width: 100%;

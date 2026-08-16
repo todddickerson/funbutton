@@ -5,11 +5,11 @@ import { AlertTriangle, ChevronRight } from "lucide-react";
 import "./App.css";
 import { HotkeyPicker } from "./HotkeyPicker";
 import { hotkeyHold, hotkeyName, hotkeyShort, type HotkeyKind } from "./hotkeys";
+import { ModelManager, type EngineStatus } from "./models";
 
 type Backend = "auto" | "groq" | "local" | "embedded";
 type SttBackend = "local" | "groq";
 type ModeOverride = "auto" | "code" | "email" | "slack" | "raw";
-type EngineStatus = "starting" | "ready" | "failed";
 
 type PremiumModel = "fast" | "premium-haiku" | "premium-sonnet" | "premium-opus" | "premium-gpt41";
 
@@ -30,6 +30,8 @@ interface Settings {
   license_jwt: string;
   cloud_api_base: string;
   premium_model: PremiumModel;
+  stt_model_id: string;
+  cleanup_model_id: string;
 }
 
 interface LicenseInfo {
@@ -228,7 +230,7 @@ function App() {
     });
     const unEmbReady = listen("funbutton:embedded-ready", () => {
       setCleanupStatus("ready");
-      pushToast("ok", "Bundled local model ready — no API key needed.");
+      pushToast("ok", "On-device cleanup model ready — no API key needed.");
     });
     const unEmbFail = listen<string>("funbutton:embedded-failed", (e) => {
       setCleanupStatus("failed");
@@ -422,13 +424,15 @@ function App() {
   // Mirrors pipeline.rs auto order: embedded → ollama → groq.
   function autoRouteLabel(): string {
     if (!settings) return "";
-    if (settings.backend === "embedded") return "pinned → qwen 2.5 (bundled)";
+    if (settings.backend === "embedded") return "pinned → on-device model";
     if (settings.backend === "local") return "pinned → ollama";
     if (settings.backend === "groq") return "pinned → groq cloud";
-    if (cleanupStatus === "ready") return "auto → qwen 2.5 (bundled)";
+    if (cleanupStatus === "ready") return "auto → on-device";
     if (ollamaUp) return "auto → ollama";
     if (hasGroqKey) return "auto → groq cloud";
-    return cleanupStatus === "failed" ? "auto → no engine up" : "auto → qwen (warming up)";
+    if (cleanupStatus === "downloading") return "auto → downloading model…";
+    if (cleanupStatus === "missing") return "auto → no engine (get a model below)";
+    return cleanupStatus === "failed" ? "auto → no engine up" : "auto → warming up";
   }
 
   return (
@@ -484,8 +488,9 @@ function App() {
                 <strong>FunButton = Fn Button.</strong> On MacBooks it&apos;s the
                 bottom-left key nobody used — we gave it a job. Different keyboard?
                 Pick any key below.<br/>
-                <strong>Zero setup.</strong> Speech-to-text and cleanup run on models
-                bundled inside the app. No account. No key. Works on a plane.<br/>
+                <strong>Zero setup.</strong> Speech-to-text and cleanup run on on-device
+                models — a small first-run download (~1.1GB), then no account, no key, works
+                on a plane.<br/>
                 Hold <kbd>{hotkeyHold(settings.hotkey_kind)}</kbd> in any text field, talk, release. Grant the three
                 permissions below and you're dictating.
               </div>
@@ -590,16 +595,16 @@ function App() {
             </div>
             <div className="fb-engines">
               <EngineRow
-                state={sttStatus === "ready" ? "ready" : sttStatus === "failed" ? "failed" : "busy"}
+                state={engineRowState(sttStatus)}
                 name="whisper"
-                detail="on-device speech-to-text · bundled"
-                label={sttStatus === "ready" ? "ready" : sttStatus === "failed" ? "failed" : "loading"}
+                detail="on-device speech-to-text"
+                label={engineRowLabel(sttStatus)}
               />
               <EngineRow
-                state={cleanupStatus === "ready" ? "ready" : cleanupStatus === "failed" ? "failed" : "busy"}
-                name="qwen 2.5 1.5b"
-                detail="bundled cleanup · zero config"
-                label={cleanupStatus === "ready" ? "ready" : cleanupStatus === "failed" ? "failed" : "warming up"}
+                state={engineRowState(cleanupStatus)}
+                name="cleanup"
+                detail="on-device model · manage below"
+                label={engineRowLabel(cleanupStatus)}
               />
               <EngineRow
                 state={ollamaUp === true ? "ready" : ollamaUp === null ? "busy" : "off"}
@@ -670,6 +675,14 @@ function App() {
               stored in your macOS Keychain, never plaintext on disk.
               ollama: run <code>ollama pull qwen2.5:1.5b</code> once.
             </div>
+          </div>
+
+          <div className="fb-section">
+            <div className="fb-label-row">
+              <label className="fb-label">Models</label>
+              <span className="fb-label-aux">downloaded, not bundled · pick your own</span>
+            </div>
+            <ModelManager pushToast={pushToast} />
           </div>
 
           <div className="fb-section">
@@ -767,7 +780,7 @@ function App() {
           </div>
 
           <footer className="fb-footer">
-            v0.1.4 · GPLv3 · <a href="https://github.com/todddickerson/funbutton" target="_blank" rel="noreferrer">github</a>
+            v0.1.7 · GPLv3 · <a href="https://github.com/todddickerson/funbutton" target="_blank" rel="noreferrer">github</a>
           </footer>
         </div>
         </div>
@@ -912,6 +925,26 @@ function App() {
 // -------------------- Engine status row --------------------
 
 type EngineRowState = "ready" | "busy" | "failed" | "off";
+
+function engineRowState(s: EngineStatus): EngineRowState {
+  switch (s) {
+    case "ready": return "ready";
+    case "failed": return "failed";
+    case "downloading":
+    case "starting": return "busy";
+    case "missing": return "off";
+  }
+}
+
+function engineRowLabel(s: EngineStatus): string {
+  switch (s) {
+    case "ready": return "ready";
+    case "failed": return "failed";
+    case "downloading": return "downloading";
+    case "starting": return "loading";
+    case "missing": return "not downloaded";
+  }
+}
 
 function EngineRow(props: { state: EngineRowState; name: string; detail: string; label: string }) {
   const glyph = props.state === "ready" ? "●" : props.state === "busy" ? "◐" : props.state === "failed" ? "✕" : "○";

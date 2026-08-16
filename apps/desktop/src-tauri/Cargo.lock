@@ -1392,7 +1392,7 @@ checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
 name = "funbutton"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "arboard",
@@ -1401,6 +1401,7 @@ dependencies = [
  "cpal",
  "enigo",
  "env_logger",
+ "hex",
  "hound",
  "keyring",
  "log",
@@ -1412,6 +1413,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",

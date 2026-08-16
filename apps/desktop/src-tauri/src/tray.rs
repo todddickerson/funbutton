@@ -116,8 +116,15 @@ fn spawn_warmup_watcher(app: AppHandle) {
             std::thread::sleep(Duration::from_secs(1));
             sync(&app);
             let st = app.state::<AppStateHandle>();
-            let stt_done = st.stt.status().label() != "starting";
-            let llm_done = st.embedded.lock().is_some() || st.embedded_error.lock().is_some();
+            // Terminal for the warm-up watcher: ready / failed / missing.
+            // "starting" and "downloading" keep it polling so the line flips
+            // live; a long download's completion also drives its own sync.
+            let done = |state: &str| matches!(state, "ready" | "failed" | "missing");
+            let stt_done = done(crate::engine_state(st.inner(), crate::models::Role::Stt));
+            let llm_done = done(crate::engine_state(
+                st.inner(),
+                crate::models::Role::Cleanup,
+            ));
             if stt_done && llm_done {
                 break;
             }
@@ -138,14 +145,10 @@ fn snapshot(app: &AppHandle) -> Snapshot {
         )
     };
     let status = *st.status.lock();
-    let stt = st.stt.status().label();
-    let cleanup = if st.embedded.lock().is_some() {
-        "ready"
-    } else if st.embedded_error.lock().is_some() {
-        "failed"
-    } else {
-        "starting"
-    };
+    // Honest per-role state — reflects "model not downloaded" / "downloading"
+    // truthfully, not just the engine's warming/ready/failed.
+    let stt = crate::engine_state(st.inner(), crate::models::Role::Stt);
+    let cleanup = crate::engine_state(st.inner(), crate::models::Role::Cleanup);
     let (has_last, last_words) = {
         let l = st.last_cleaned.lock();
         (!l.is_empty(), l.split_whitespace().count())
@@ -169,13 +172,23 @@ fn build_menu(app: &AppHandle, s: &Snapshot) -> tauri::Result<Menu<Wry>> {
     // Telemetry block — deliberately lowercase, reads like log output.
     // Healthy/warming lines are read-only; a failed engine line becomes a
     // live affordance (click → Settings) instead of a read-only lament.
+    // A status line is clickable (→ Settings, where the model manager lives)
+    // whenever the engine needs attention: model missing, downloading, or a
+    // load failure. Healthy/warming lines stay read-only.
+    let needs_attention = |state: &str| matches!(state, "failed" | "missing" | "downloading");
     let status_line = MenuItem::with_id(app, "st_status", status_text(s), false, None::<&str>)?;
-    let stt_line = MenuItem::with_id(app, "st_stt", stt_text(s), s.stt == "failed", None::<&str>)?;
+    let stt_line = MenuItem::with_id(
+        app,
+        "st_stt",
+        stt_text(s),
+        needs_attention(s.stt),
+        None::<&str>,
+    )?;
     let llm_line = MenuItem::with_id(
         app,
         "st_llm",
         cleanup_text(s),
-        s.cleanup == "failed",
+        needs_attention(s.cleanup),
         None::<&str>,
     )?;
 
@@ -370,7 +383,15 @@ fn status_text(s: &Snapshot) -> String {
 fn stt_text(s: &Snapshot) -> &'static str {
     match s.stt {
         "ready" => "✓ whisper — on-device, ready",
-        // Failed lines are enabled (click → Settings), so the label says so.
+        // Missing/downloading/failed lines are enabled (click → Settings).
+        "missing" => {
+            if s.has_cloud {
+                "○ whisper — model not downloaded · using cloud · click to get it"
+            } else {
+                "○ whisper — model not downloaded · click to get it"
+            }
+        }
+        "downloading" => "◌ whisper — downloading model…",
         "failed" => {
             if s.has_cloud {
                 "✕ whisper — down, using cloud · click to fix"
@@ -384,7 +405,9 @@ fn stt_text(s: &Snapshot) -> &'static str {
 
 fn cleanup_text(s: &Snapshot) -> &'static str {
     match s.cleanup {
-        "ready" => "✓ cleanup — qwen 1.5B, local",
+        "ready" => "✓ cleanup — local model, ready",
+        "missing" => "○ cleanup — model not downloaded · raw fallback · click to get it",
+        "downloading" => "◌ cleanup — downloading model…",
         "failed" => "✕ cleanup — down, raw fallback · click to fix",
         _ => "◌ cleanup — warming up…",
     }

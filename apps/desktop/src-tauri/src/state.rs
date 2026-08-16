@@ -1,6 +1,7 @@
 use crate::embedded_llm::EmbeddedServerHandle;
 use crate::embedded_stt::{EmbeddedStt, EmbeddedSttHandle};
 use crate::history::History;
+use crate::models::{DownloadManager, DownloadManagerHandle, Manifest};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU8};
@@ -199,6 +200,21 @@ pub struct Settings {
     /// Values: "fast" | "premium-haiku" | "premium-sonnet" | "premium-opus" | "premium-gpt41"
     #[serde(default = "default_premium_model")]
     pub premium_model: String,
+    /// Active on-device STT model id (manifest id). Models live in Application
+    /// Support, downloaded on first run — not bundled in the .app. Empty/unknown
+    /// resolves to the manifest default.
+    #[serde(default = "default_stt_model_id")]
+    pub stt_model_id: String,
+    /// Active on-device cleanup model id (manifest id). Same store as STT.
+    #[serde(default = "default_cleanup_model_id")]
+    pub cleanup_model_id: String,
+}
+
+pub fn default_stt_model_id() -> String {
+    "whisper-base.en".to_string()
+}
+pub fn default_cleanup_model_id() -> String {
+    "qwen2.5-1.5b-instruct".to_string()
 }
 
 fn default_cloud_api_base() -> String {
@@ -245,6 +261,8 @@ impl Default for Settings {
             license_jwt: String::new(),
             cloud_api_base: default_cloud_api_base(),
             premium_model: default_premium_model(),
+            stt_model_id: default_stt_model_id(),
+            cleanup_model_id: default_cleanup_model_id(),
         }
     }
 }
@@ -306,6 +324,11 @@ pub struct AppState {
     /// checks it so a hold that lands mid-quit can't start a new recording /
     /// pipeline run and grab the whisper session while we're unloading it.
     pub shutting_down: AtomicBool,
+    /// Model manifest (which models exist, their roles / urls / sizes / hashes).
+    /// Loaded baked-in at construction, refreshed from the network at startup.
+    pub manifest: Mutex<Manifest>,
+    /// In-flight model downloads — cancellable, and cancelled on quit.
+    pub downloads: DownloadManagerHandle,
 }
 
 pub type AppStateHandle = Arc<AppState>;
@@ -326,6 +349,8 @@ impl AppState {
             capture: Arc::new(crate::hotkey::CaptureState::new()),
             hotkey_tx: Mutex::new(None),
             shutting_down: AtomicBool::new(false),
+            manifest: Mutex::new(Manifest::baked()),
+            downloads: DownloadManager::new(),
         })
     }
 }

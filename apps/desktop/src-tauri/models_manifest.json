@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "note": "FunButton model manifest. Ships baked into the app as a fallback; the app also fetches the live copy from the raw GitHub URL so new models can be added without an app update. Every sha256 is the file's git-LFS OID (HuggingFace x-linked-etag) and is re-verified byte-for-byte after download.",
+  "models": [
+    {
+      "id": "whisper-tiny.en",
+      "role": "stt",
+      "name": "Whisper tiny.en",
+      "filename": "whisper-tiny.en-Q8_0.gguf",
+      "url": "https://huggingface.co/handy-computer/whisper-tiny.en-gguf/resolve/main/whisper-tiny.en-Q8_0.gguf",
+      "sha256": "e8c9b73c06344307d8b346e07fbe93dd88d894627854bcff31523f1ce44394fa",
+      "size_bytes": 45904544,
+      "blurb": "Fastest, smallest. Great on older Macs or when speed beats accuracy.",
+      "license": "MIT",
+      "default": false,
+      "recommended": false,
+      "min_app_version": "0.1.7"
+    },
+    {
+      "id": "whisper-base.en",
+      "role": "stt",
+      "name": "Whisper base.en",
+      "filename": "whisper-base.en-Q8_0.gguf",
+      "url": "https://huggingface.co/handy-computer/whisper-base.en-gguf/resolve/main/whisper-base.en-Q8_0.gguf",
+      "sha256": "3b46ca40bccbf7609c68d88a36d96077a04ca7c87f2060ede06f129fac3e7652",
+      "size_bytes": 84886208,
+      "blurb": "The default. Best accuracy-per-megabyte for everyday dictation.",
+      "license": "MIT",
+      "default": true,
+      "recommended": true,
+      "min_app_version": "0.1.7"
+    },
+    {
+      "id": "whisper-small.en",
+      "role": "stt",
+      "name": "Whisper small.en",
+      "filename": "whisper-small.en-Q8_0.gguf",
+      "url": "https://huggingface.co/handy-computer/whisper-small.en-gguf/resolve/main/whisper-small.en-Q8_0.gguf",
+      "sha256": "9614e6b7fda2d26018e4f268aece8ca25a83296ea0b534169a585b740bfd71ef",
+      "size_bytes": 269674144,
+      "blurb": "Most accurate. Better on accents and technical jargon; a touch slower.",
+      "license": "MIT",
+      "default": false,
+      "recommended": false,
+      "min_app_version": "0.1.7"
+    },
+    {
+      "id": "qwen2.5-0.5b-instruct",
+      "role": "cleanup",
+      "name": "Qwen 2.5 0.5B",
+      "filename": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+      "url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+      "sha256": "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
+      "size_bytes": 491400032,
+      "blurb": "Tiny + snappy cleanup. Lowest latency; fine for short dictation.",
+      "license": "Apache-2.0",
+      "default": false,
+      "recommended": false,
+      "min_app_version": "0.1.7"
+    },
+    {
+      "id": "qwen2.5-1.5b-instruct",
+      "role": "cleanup",
+      "name": "Qwen 2.5 1.5B",
+      "filename": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+      "url": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+      "sha256": "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
+      "size_bytes": 1117320736,
+      "blurb": "The default. Best balance of cleanup quality and speed on-device.",
+      "license": "Apache-2.0",
+      "default": true,
+      "recommended": true,
+      "min_app_version": "0.1.7"
+    },
+    {
+      "id": "phi-3-mini-4k-instruct",
+      "role": "cleanup",
+      "name": "Phi-3 mini 4k",
+      "filename": "Phi-3-mini-4k-instruct-q4.gguf",
+      "url": "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf",
+      "sha256": "8a83c7fb9049a9b2e92266fa7ad04933bb53aa1e85136b7b30f1b8000ff2edef",
+      "size_bytes": 2393231072,
+      "blurb": "Sharpest cleanup. 3.8B params for tricky formatting and long dictation.",
+      "license": "MIT",
+      "default": false,
+      "recommended": false,
+      "min_app_version": "0.1.7"
+    }
+  ]
+}
