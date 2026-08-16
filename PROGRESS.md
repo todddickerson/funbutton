@@ -2,6 +2,32 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-08-16 14:20 — v0.1.7 SHIPPED: the tiny installer is public (16 MB DMG, models on first run)
+
+**The tiny-installer work (PR #7) is finally in a public release. Last public build (v0.1.6) still shipped a 1.2 GB bundle; v0.1.7 cuts the download ~75×. Cut off `main` after merging PR #8, QA'd on a real clean install, deployed to funbutton.ai, verified live.**
+
+**Release:** https://github.com/todddickerson/funbutton/releases/tag/v0.1.7 (latest, not prerelease, DMG attached). `api/releases/latest` → `v0.1.7`.
+
+**Sizes (before → after, measured on this build):**
+- `.app`: v0.1.6 ~1.2 GB → **v0.1.7 39 MB** (41,402,368 B), **zero `.gguf` inside** (verified).
+- DMG: v0.1.6 ~1.21 GB → **v0.1.7 16.2 MB** (`FunButton_0.1.7_aarch64.dmg`, 17,037,342 B, `hdiutil verify` VALID).
+
+**Gates — all green:** `cargo check` (10.8s) · `cargo build --release` (2m39s, R1 linker fix held, no `__isPlatformVersionAtLeast`) · `cargo test --release --lib` **59 passed / 0 failed / 5 ignored** · `cargo fmt --check` · `cargo clippy` (0 warnings) · worker `tsc` · web `tsc`+`eslint`+`next build` · **keyless offline STT from the App Support store** → `"Refactor the auth middleware and open a pull request."` · crash-guard grep (4 hits, all comments) · injection guard **4/4** vs live bundled Qwen.
+
+**Real install QA (full trail in `RUNTIME-QA-v0.1.7.md`):** moved Todd's model store aside for a genuine clean first run, installed the new `.app`, `xattr -cr`'d it.
+- **First-run download:** app reported models **missing** → downloaded with live progress → **SHA-256 verified** (whisper 84,886,208 B; qwen 1,117,320,736 B — both match manifest) → whisper loaded on Metal → `llama-server` ready.
+- **Resume:** hard-SIGKILL mid-qwen (`.part` at 995,676,703 B) → relaunch **continued from the `.part`** (995 MB → 1,020 → 1,055 MB, never truncated) → resumed to completion + verified + promoted.
+- **Quit fix:** 2× engines-up AppleEvent quits + 1× quit *during* an in-flight download → **zero new `.ips`, zero orphan `llama-server`** every time; `ggml_metal_free` before exit; download cancelled cleanly with `.part` preserved.
+- **BLOCKED (human, ~1 min):** full real-mic dictation in the installed app — the fresh ad-hoc build's cdhash reset the Microphone TCC grant, and macOS blocks first mic access behind the one-time prompt (can't grant headlessly). Every pipeline stage is proven green independently (transcribe via the offline gate, cleanup+guard via the live-model 4/4). Steps to finish in the QA doc. Also unchanged human items: Accessibility paste, visual tray/pill, Gatekeeper first-open.
+
+**Landing (funbutton.ai) — deployed + verified live:**
+- `bash scripts/update-landing-version.sh` → `version.ts` already 0.1.7 (no main push), deployed to prod, **`~/clawd/memory/funbutton-landing-state.json` written** (`{"version":"v0.1.7","dmg":"FunButton_0.1.7_aarch64.dmg",…}`, 18:17:27Z). (The "never written" note was stale — the deploy-abort bug was already fixed in the v0.1.6 ship; it writes reliably now.)
+- `curl -sIL -o /dev/null -w '%{http_code}' https://funbutton.ai/download` → **200**.
+- `curl -sIL https://funbutton.ai/download | grep filename%3D` → **`FunButton_0.1.7_aarch64.dmg`**.
+- Live page shows **0.1.7**, the **~16 MB download** copy, and a **prominent first-open unblock callout at the download button with BOTH `xattr` commands** (`.dmg` *and* `.app`) — Todd hit the DMG-level "damaged" dialog on 2026-08-15 because only the `.app` command was given. No stale 0.1.6 reference.
+
+**Still:** arm64-only, unsigned (Developer ID cert pending — see `SIGNING.md`), GPLv3.
+
 ## 2026-08-15 12:25 — Tiny installer: models stripped from the bundle, downloaded on first run (branch `feat-model-downloader`)
 
 **The shipped app went from 1.2 GB → a 16 MB DMG. We were shipping 1.1 GB of `.gguf` inside the .app to deliver a 17 MB app. Now the .app ships zero models; whisper + a cleanup LLM download on first run into Application Support (NOT the bundle — so future code-signing stays intact), SHA-256-verified, resumable, cancellable. A model manager in Settings lets you add/swap smaller-faster or bigger-sharper models. PR opened into `main`; no release cut, landing not deployed — Todd reviews.**
