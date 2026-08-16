@@ -146,11 +146,43 @@ function Hero() {
       </div>
 
       <p className="mt-4 font-mono text-[11px] text-neutral-600 max-w-xl leading-relaxed">
-        A <span className="text-neutral-300">~17 MB</span> download — not the 1.2 GB
-        the other guys ship. The on-device models (Whisper + a cleanup LLM, ~1.1 GB) fetch
-        once on first run, SHA-verified, then it&apos;s fully offline forever. GPLv3 — read
-        every line before it reads you.
+        A <span className="text-neutral-300">~16 MB</span> download — not the 1.2 GB
+        we used to ship (or the ~1 GB the bundle-a-model apps ship). The on-device models
+        (Whisper + a cleanup LLM, ~1.1 GB) fetch once on first run, SHA-256-verified and
+        resumable, then it&apos;s fully offline forever. GPLv3 — read every line before it
+        reads you.
       </p>
+
+      {/* First-open unblock, right at the button. macOS mislabels an unsigned app as
+          "damaged"; the fix needs BOTH the .dmg and the .app cleared — Todd hit the
+          DMG-level dialog when only the .app command was given. */}
+      <div className="mt-5 max-w-xl rounded-md border border-amber-500/30 bg-amber-500/[0.06] p-3.5">
+        <p className="font-mono text-[11px] leading-relaxed text-amber-200/90">
+          <span className="font-bold">First open on macOS?</span> If you see{" "}
+          <span className="text-amber-100">&ldquo;FunButton is damaged and can&apos;t be
+          opened&rdquo;</span>, it isn&apos;t. That&apos;s macOS mislabeling an unsigned app.
+          Clear quarantine on the <span className="text-amber-100">download</span> and the{" "}
+          <span className="text-amber-100">app</span>, then open it:
+        </p>
+        <pre className="mt-2.5 overflow-x-auto rounded bg-black/40 p-2.5 font-mono text-[11px] leading-relaxed text-neutral-200">
+          <code>
+            <span className="text-red-400">$</span> xattr -cr ~/Downloads/FunButton_{APP_VERSION}_aarch64.dmg{"\n"}
+            <span className="text-red-400">$</span> xattr -cr /Applications/FunButton.app
+          </code>
+        </pre>
+        <p className="mt-2 font-mono text-[10px] text-neutral-500">
+          Real signing is on the way (Developer ID cert pending) — see{" "}
+          <a
+            href={`${REPO_URL}/blob/main/SIGNING.md`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-2 decoration-neutral-700 hover:text-amber-300"
+          >
+            SIGNING.md
+          </a>
+          .
+        </p>
+      </div>
 
       {/* the Fn-key gag, rendered */}
       <div className="mt-12 flex flex-wrap items-end gap-1.5 select-none" aria-hidden>
@@ -374,7 +406,7 @@ function Comparison() {
   const rows: [string, string, string, string, string][] = [
     ["Price", "$0 · $149 lifetime", "$0", "$25–49 lifetime", "$12–15/mo, forever"],
     ["License", "GPLv3", "MIT", "GPLv3", "closed"],
-    ["Download size", "~17 MB app", "app + model", "app + model", "cloud"],
+    ["Download size", "~16 MB download", "app + model", "app + model", "cloud"],
     ["Works offline", "after first-run models", "yes", "yes", "no"],
     ["AI cleanup on-device", "on-device, default", "optional", "optional (cloud text)", "cloud only"],
     ["API key or account", "never", "never", "never", "account required"],
@@ -476,16 +508,23 @@ function OpenSourceInstall() {
             <span className="font-mono text-[11px] text-neutral-500">install — 60 seconds</span>
           </div>
           <div className="p-4 sm:p-5 font-mono text-[13px] leading-relaxed overflow-x-auto">
-            <p className="text-neutral-600"># 1. download the dmg, drag to /Applications</p>
-            <p className="text-neutral-600 mt-2"># 2. unsigned alpha — clear quarantine:</p>
+            <p className="text-neutral-600">
+              # 1. unsigned alpha — clear quarantine on the download:
+            </p>
             <p className="text-neutral-100 whitespace-nowrap">
-              <span className="text-red-400">$</span> sudo xattr -cr /Applications/FunButton.app
+              <span className="text-red-400">$</span> xattr -cr ~/Downloads/FunButton_{APP_VERSION}_aarch64.dmg
+            </p>
+            <p className="text-neutral-600 mt-2">
+              # 2. open it, drag FunButton to /Applications, then clear the app too:
+            </p>
+            <p className="text-neutral-100 whitespace-nowrap">
+              <span className="text-red-400">$</span> xattr -cr /Applications/FunButton.app
             </p>
             <p className="text-neutral-600 mt-2">
               # 3. grant Microphone · Accessibility · Input Monitoring
             </p>
             <p className="text-neutral-600 mt-2">
-              # 4. first run downloads the models (~1.1 GB, SHA-verified)
+              # 4. first run downloads the models (~1.1 GB, SHA-256-verified, resumable)
             </p>
             <p className="text-neutral-600 mt-2"># 5. hold fn. talk. done.</p>
           </div>
@@ -657,7 +696,7 @@ function PricingSection() {
           period="forever"
           features={[
             "Fully local: on-device Whisper + LLM",
-            "~17 MB app · models download on first run",
+            "~16 MB download · models fetch on first run",
             "Unlimited usage, or BYO Groq / Ollama",
             "GPLv3 — open source desktop",
           ]}
