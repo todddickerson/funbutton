@@ -5,4 +5,4 @@
 // so the visible version can never drift between surfaces. The download CTA is
 // deliberately NOT derived from this — it uses the version-agnostic /download
 // route so the primary CTA keeps working even if this label lags a release.
-export const APP_VERSION = "0.1.6";
+export const APP_VERSION = "0.1.7";
