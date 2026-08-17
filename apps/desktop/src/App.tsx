@@ -9,7 +9,17 @@ import { ModelManager, type EngineStatus } from "./models";
 
 type Backend = "auto" | "groq" | "local" | "embedded";
 type SttBackend = "local" | "groq";
-type ModeOverride = "auto" | "code" | "email" | "slack" | "raw";
+type ModeOverride = "auto" | "code" | "terminal" | "email" | "slack" | "raw";
+
+// Every ModeOverride, in display order. Shared by the global pills and the
+// per-app editor's selects — the two surfaces must never drift apart.
+const MODES: ModeOverride[] = ["auto", "code", "terminal", "email", "slack", "raw"];
+
+// One user per-app mode pin. Mirrors src-tauri/src/state.rs AppModeRule.
+interface AppModeRule {
+  app: string;
+  mode: ModeOverride;
+}
 
 type PremiumModel = "fast" | "premium-haiku" | "premium-sonnet" | "premium-opus" | "premium-gpt41";
 
@@ -24,6 +34,9 @@ interface Settings {
   hotkey_label: string;
   hotkey_kind: HotkeyKind;
   mode_override: ModeOverride;
+  app_mode_overrides: AppModeRule[];
+  capture_context: boolean;
+  context_to_cloud: boolean;
   dictionary: string[];
   history_retention_days: number;
   onboarded: boolean;
@@ -697,13 +710,31 @@ function App() {
               </span>
             </div>
             <div className="fb-radios">
-              {(["auto","code","email","slack","raw"] as const).map(m => (
+              {MODES.map(m => (
                 <button
                   key={m}
                   className={`fb-pill ${settings.mode_override === m ? "on" : ""}`}
                   onClick={() => setAndSave("mode_override", m)}
                 >{m}</button>
               ))}
+            </div>
+
+            {/* Editable per-app pins — beat the built-in map, per app. */}
+            <div className="fb-sublabel-row">
+              <span className="fb-sublabel">your per-app pins</span>
+              <span className="fb-sublabel-aux">override &gt; built-in &gt; auto</span>
+            </div>
+            <AppModeEditor
+              rules={settings.app_mode_overrides}
+              currentApp={settings.mode_override === "auto" ? (lastRouted?.frontmost_app ?? null) : null}
+              bypassed={settings.mode_override !== "auto"}
+              onChange={(r) => setAndSave("app_mode_overrides", r)}
+            />
+
+            {/* Built-in routing reference — what "auto" does out of the box. */}
+            <div className="fb-sublabel-row">
+              <span className="fb-sublabel">built-in routing</span>
+              <span className="fb-sublabel-aux">what auto does out of the box</span>
             </div>
             <div className={`fb-modemap ${settings.mode_override !== "auto" ? "bypassed" : ""}`}>
               {MODE_MAP.map(row => (
@@ -725,8 +756,41 @@ function App() {
             </div>
             {settings.mode_override !== "auto" && (
               <div className="fb-hint">
-                per-app routing is paused while an override is set. flip back to <strong>auto</strong> to re-enable it.
+                override on — every app gets <strong>{settings.mode_override}</strong>. your per-app pins and the built-in map resume the moment you flip back to <strong>auto</strong>.
               </div>
+            )}
+          </div>
+
+          <div className="fb-section">
+            <div className="fb-label-row">
+              <label className="fb-label">Deep context</label>
+              <span className="fb-label-aux">{settings.capture_context ? (settings.context_to_cloud ? "on · local + cloud" : "on · local only") : "off"}</span>
+            </div>
+            <div className="fb-radios">
+              <button
+                className={`fb-pill ${settings.capture_context ? "on" : ""}`}
+                onClick={() => setAndSave("capture_context", true)}
+              >on</button>
+              <button
+                className={`fb-pill ${!settings.capture_context ? "on" : ""}`}
+                onClick={() => setAndSave("capture_context", false)}
+              >off</button>
+            </div>
+            <div className="fb-hint">
+              reads the focused window title, the field you're in, and any selected text (via
+              accessibility) so cleanup spells your identifiers and jargon right per app. it never
+              leaves this mac — fed only into the local cleanup prompt, never logged, never saved to
+              history.
+            </div>
+            {settings.capture_context && (
+              <label className="fb-check">
+                <input
+                  type="checkbox"
+                  checked={settings.context_to_cloud}
+                  onChange={(e) => setAndSave("context_to_cloud", e.target.checked)}
+                />
+                <span>also send this context to cloud cleanup (Groq / premium). off by default — window titles and selections stay on-device unless you opt in.</span>
+              </label>
             )}
           </div>
 
@@ -960,6 +1024,92 @@ function EngineRow(props: { state: EngineRowState; name: string; detail: string;
 
 // -------------------- Dictionary chip editor --------------------
 // Settings.dictionary stays string[] — this is presentation only.
+
+// Editable per-app mode pins (VoiceInk Power Mode parity). Each row forces a
+// mode for one app, beating the built-in auto-detection. Picking "auto (reset)"
+// or the × removes the pin, falling back to the built-in map. Changes persist
+// instantly via setAndSave and the pipeline reads settings fresh every
+// dictation, so they take effect on the next hold — no restart.
+function AppModeEditor(props: {
+  rules: AppModeRule[];
+  currentApp: string | null;
+  bypassed: boolean;
+  onChange: (r: AppModeRule[]) => void;
+}) {
+  const { rules, currentApp, bypassed, onChange } = props;
+  const [draft, setDraft] = useState("");
+
+  const has = (app: string) =>
+    rules.some((r) => r.app.trim().toLowerCase() === app.trim().toLowerCase());
+
+  function addApp(app: string, mode: ModeOverride = "code") {
+    const name = app.trim();
+    setDraft("");
+    if (!name || has(name)) return;
+    onChange([...rules, { app: name, mode }]);
+  }
+
+  function setMode(app: string, mode: ModeOverride) {
+    // "auto" is not an override — dropping the row resets it to the built-in map.
+    if (mode === "auto") {
+      onChange(rules.filter((r) => r.app !== app));
+      return;
+    }
+    onChange(rules.map((r) => (r.app === app ? { ...r, mode } : r)));
+  }
+
+  const canQuickAdd = !!currentApp && currentApp !== "Unknown" && !has(currentApp);
+
+  return (
+    <div className={`fb-appmodes ${bypassed ? "bypassed" : ""}`}>
+      {rules.length === 0 && (
+        <div className="fb-appmodes-empty">
+          no pins yet — auto-detection handles every app. pin one to force its mode.
+        </div>
+      )}
+      {rules.map((r) => (
+        <div className="fb-appmode-row" key={r.app}>
+          <span className="fb-appmode-name">{r.app}</span>
+          <select
+            className="fb-mode-select"
+            value={r.mode}
+            aria-label={`mode for ${r.app}`}
+            onChange={(e) => setMode(r.app, e.target.value as ModeOverride)}
+          >
+            {MODES.map((m) => (
+              <option key={m} value={m}>{m === "auto" ? "auto (reset)" : m}</option>
+            ))}
+          </select>
+          <button
+            className="fb-chip-x"
+            aria-label={`remove ${r.app} pin`}
+            onClick={() => onChange(rules.filter((x) => x.app !== r.app))}
+          >×</button>
+        </div>
+      ))}
+      <div className="fb-appmode-add">
+        <input
+          className="fb-input fb-appmode-input"
+          value={draft}
+          placeholder="add an app — Obsidian, Ghostty, Notion…"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === ",") {
+              e.preventDefault();
+              addApp(draft);
+            }
+          }}
+          onBlur={() => { if (draft.trim()) addApp(draft); }}
+        />
+        {canQuickAdd && (
+          <button className="fb-linkbtn" onClick={() => addApp(currentApp!)}>
+            + pin {currentApp}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function DictionaryEditor(props: { words: string[]; onChange: (w: string[]) => void }) {
   const { words, onChange } = props;

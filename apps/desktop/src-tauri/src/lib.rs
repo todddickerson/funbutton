@@ -1,3 +1,4 @@
+mod app_context;
 mod app_detect;
 mod audio;
 mod cleanup;

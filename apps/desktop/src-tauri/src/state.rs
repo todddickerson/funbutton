@@ -43,9 +43,27 @@ pub enum ModeOverride {
     #[default]
     Auto,
     Code,
+    /// Shell surface — the literal-command prompt. Now user-selectable (both
+    /// as the global override and as a per-app rule); it used to be reachable
+    /// only via auto-detection, which meant a user could never *force* a
+    /// terminal-emulator-in-a-window into terminal mode (finding #9).
+    Terminal,
     Email,
     Slack,
     Raw,
+}
+
+/// A user-pinned mode for a specific app. Beats built-in auto-detection but
+/// yields to a global `mode_override`. Resolution order lives in
+/// `cleanup::resolve_mode`: global override > per-app rule > built-in detect.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppModeRule {
+    /// App name to match, case-insensitively, against the frontmost app's
+    /// display label or raw OS name (see `FrontApp::match_keys`).
+    pub app: String,
+    /// The mode to force for this app. A rule of `Auto` is a no-op (same as no
+    /// rule) — the UI uses that to represent "reset this row".
+    pub mode: ModeOverride,
 }
 
 /// Which key acts as push-to-talk.
@@ -183,6 +201,22 @@ pub struct Settings {
     pub hotkey_kind: HotkeyKind,
     #[serde(default)]
     pub mode_override: ModeOverride,
+    /// User per-app mode pins (VoiceInk Power Mode parity). Empty by default;
+    /// serde-defaulted so older settings files load unchanged.
+    #[serde(default)]
+    pub app_mode_overrides: Vec<AppModeRule>,
+    /// Deep-context cleanup: read the focused window title / element role /
+    /// selected text via Accessibility and feed it into the LOCAL cleanup
+    /// prompt so names and identifiers are spelled right per app. Default ON,
+    /// local-only — captured context never leaves the machine unless the user
+    /// also flips `context_to_cloud`.
+    #[serde(default = "default_true")]
+    pub capture_context: bool,
+    /// Also include captured screen context in CLOUD cleanup prompts (Groq
+    /// BYOK). Default OFF: window titles / selected text are sensitive and
+    /// stay on-device unless the user explicitly opts into sending them.
+    #[serde(default)]
+    pub context_to_cloud: bool,
     #[serde(default)]
     pub dictionary: Vec<String>,
     #[serde(default = "default_retention_days")]
@@ -208,6 +242,10 @@ pub struct Settings {
     /// Active on-device cleanup model id (manifest id). Same store as STT.
     #[serde(default = "default_cleanup_model_id")]
     pub cleanup_model_id: String,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 pub fn default_stt_model_id() -> String {
@@ -255,6 +293,9 @@ impl Default for Settings {
             hotkey_label: default_hotkey_label(),
             hotkey_kind: HotkeyKind::default(),
             mode_override: ModeOverride::default(),
+            app_mode_overrides: Vec::new(),
+            capture_context: true,
+            context_to_cloud: false,
             dictionary: Vec::new(),
             history_retention_days: default_retention_days(),
             onboarded: false,

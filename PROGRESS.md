@@ -2,6 +2,27 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-08-17 13:05 — Deep-context cleanup + editable per-app modes (branch `feat-context-and-modes`, PR open)
+
+**Built the two highest-impact remaining gauntlet items in one branch (they share the per-app intelligence layer): #2 deep-context cleanup and #3 editable per-app mode map, plus #9 forceable terminal mode. No release, no landing deploy, no comms — per the brief.**
+
+**Part A — deep-context cleanup (finding #2):** new `app_context.rs` reads the focused window title / element role / selected text via macOS Accessibility (hand-rolled AX FFI, zero new crates). Runs off the hotkey path on `DetectHandle`'s own channel (never delays app detection or STT), each AX round-trip bounded by `AXUIElementSetMessagingTimeout(0.4s)`, every read degrades to `None`. Injected into the cleanup prompt so identifiers/brands/jargon spell right per app.
+- **Privacy:** default ON, **local-only** — context reaches the cloud (Groq BYOK) only via an explicit `context_to_cloud` opt-in (default OFF); never logged (presence booleans only), never persisted to history. Reuses the Accessibility grant the app already needs for paste — **no new permission**.
+- **Injection surface:** window titles are a fresh prompt-injection vector. `render_context_block` frames the context as hard READ-ONLY, and a new `guard::detect_context_injection` is the runtime backstop.
+
+**Part B — editable per-app mode map (finding #3) + terminal (finding #9):** persisted `app_mode_overrides` store; resolution `global override > per-app rule > built-in detection`. Settings UI (App.tsx) now edits each app's mode, adds an unlisted app (with a `+ pin <current app>` quick-add), and resets a row to auto. `ModeOverride::Terminal` added and surfaced in the Settings pills, tray mode menu, and per-app rows. Takes effect on the next dictation — no restart.
+
+**Gates — all green:** `cargo check` · `cargo build --release` (clean, LTO) · `cargo fmt --check` · `cargo clippy` **0 warnings** · `cargo test --release --lib` **78 passed / 0 failed / 7 ignored** · worker + desktop `tsc --noEmit` · keyless offline STT from the App Support store → `"Refactor the auth middleware and open a pull request."` · crash-guard grep (doc comments only) · quit path **2× graceful quit → 0 new `.ips`, 0 llama-server orphans**.
+
+**Real runtime proof (full trail in `RUNTIME-QA-context-and-modes.md`):**
+- **The feature does something** — live bundled Qwen, deterministic (temp 0): utterance `"the click funnels webhook keeps failing"` + window `"ClickFunnels — webhooks.ts"` → no-context `"The click funnel webhook is failing."` vs **with-context `"The ClickFunnels webhook is failing."`**. The window title measurably changed the output.
+- **Injection guard** — existing 4/4 still caught on the live model; new context-borne cases (malicious window titles) never reach the paste (the READ-ONLY framing held so well the model didn't even obey, guard as backstop).
+- **Per-app override immediacy** — a live `AppState` proves a pin flips the next dictation's mode with no restart (Slack→slack, then pin Slack→raw → raw, clear → slack, global override → terminal).
+
+**BLOCKED (human TCC):** eyeballing the *live* AX read returning real window titles needs Accessibility granted to this specific build (a normal install already has it via paste); `screencapture` is black on this machine so no UI screenshots were taken or faked. Exact steps in the QA doc.
+
+**One dep touch:** enabled objc2-app-kit's `libc` feature (exposes `NSRunningApplication.processIdentifier` for the AX pid) — `libc` was already in the tree, so `Cargo.lock` gains one line and zero new crates.
+
 ## 2026-08-16 14:20 — v0.1.7 SHIPPED: the tiny installer is public (16 MB DMG, models on first run)
 
 **The tiny-installer work (PR #7) is finally in a public release. Last public build (v0.1.6) still shipped a 1.2 GB bundle; v0.1.7 cuts the download ~75×. Cut off `main` after merging PR #8, QA'd on a real clean install, deployed to funbutton.ai, verified live.**

@@ -194,13 +194,14 @@ fn build_menu(app: &AppHandle, s: &Snapshot) -> tauri::Result<Menu<Wry>> {
 
     // Mode quick-switch — radio via CheckMenuItems; persists through the
     // same settings save path the Settings window uses.
-    let modes: [(&str, ModeOverride, &str); 5] = [
+    let modes: [(&str, ModeOverride, &str); 6] = [
         (
             "mode_auto",
             ModeOverride::Auto,
             "Auto (match the front app)",
         ),
         ("mode_code", ModeOverride::Code, "Code"),
+        ("mode_terminal", ModeOverride::Terminal, "Terminal"),
         ("mode_email", ModeOverride::Email, "Email"),
         ("mode_slack", ModeOverride::Slack, "Slack"),
         ("mode_raw", ModeOverride::Raw, "Raw (verbatim, no cleanup)"),
@@ -332,6 +333,7 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         id @ ("mode_auto" | "mode_code" | "mode_email" | "mode_slack" | "mode_raw") => {
             let mode = match id {
                 "mode_code" => ModeOverride::Code,
+                "mode_terminal" => ModeOverride::Terminal,
                 "mode_email" => ModeOverride::Email,
                 "mode_slack" => ModeOverride::Slack,
                 "mode_raw" => ModeOverride::Raw,
@@ -452,6 +454,7 @@ fn mode_label(m: ModeOverride) -> &'static str {
     match m {
         ModeOverride::Auto => "Auto",
         ModeOverride::Code => "Code",
+        ModeOverride::Terminal => "Terminal",
         ModeOverride::Email => "Email",
         ModeOverride::Slack => "Slack",
         ModeOverride::Raw => "Raw",

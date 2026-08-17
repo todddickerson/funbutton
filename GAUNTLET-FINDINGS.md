@@ -24,6 +24,20 @@ Piece tags: A onboarding · B settings · C pill/HUD · D tray · E dev-first en
 
 **Implemented during the gauntlet (originally logged as gaps, then fixed in later rounds):** real end-to-end try-it step in onboarding (A r3), OG image via next/og (F r2), Groq BYOK STT vocabulary biasing (E r2), pill bottom-center multi-monitor placement (C r2-r3), shields.io badge removal (F r3).
 
+**Implemented in branch `feat-context-and-modes` (2026-08-17):**
+- **#2 [E] Deep-context cleanup** — new `app_context.rs` reads focused window title / element role / selected text via Accessibility (AX), off the hotkey path, bounded by `AXUIElementSetMessagingTimeout`, degrading to `None` when ungranted. Injected into the LOCAL cleanup prompt (cloud only on explicit `context_to_cloud` opt-in). Proven at runtime: window `ClickFunnels — webhooks.ts` turned `"click funnel"` → `"ClickFunnels"` on the live bundled Qwen (see RUNTIME-QA-context-and-modes.md).
+- **#3 [B] Editable per-app mode map** — persisted `app_mode_overrides` store, resolution `global override > per-app rule > built-in detection`; Settings UI now edits rows, adds unlisted apps, and resets to auto. Takes effect on the next dictation, no restart.
+- **#9 [B] Forceable terminal mode** — `ModeOverride::Terminal` added and surfaced in the Settings pills, the tray mode menu, and per-app rows.
+- **#5 [E] guard (extended)** — added `detect_context_injection`: a window title fed into the prompt is a fresh injection surface; the guard falls back to raw when the output is hijacked by screen context. Prompt-level READ-ONLY framing is the first line, the guard the backstop.
+
+## New findings from `feat-context-and-modes`
+
+- **[E] Selected-text context can leak the wrong tone in long selections** — `AXSelectedText` is capped at 280 chars but a large highlighted block still biases vocabulary heavily; a smarter heuristic (only use selection when the focused role is a text field, or weight it below the window title) could sharpen the signal. Currently all captured fields are injected equally.
+- **[E] Deep-context is not fed to the whisper STT prompt** — only the cleanup prompt gets the window title. A window like `auth_middleware.rs` could also bias the whisper initial prompt (like the dev dictionary does) so the identifier is heard right in the first place, not just spelled right after. Out of scope here (STT-prompt budget interplay), logged for a follow-up.
+- **[E] `context_to_cloud` opt-in does not reach the premium worker path** — when a licensed user enables cloud context, Groq BYOK gets it but the premium worker (`cloud.rs` cleanup) still builds its own prompt server-side and never receives the context; parity requires a worker API field. Same shape as finding #4 (premium path lags free).
+- **[B] Per-app rules match on app name, not bundle id** — matching is by `NSWorkspace.localizedName` (display label / raw name), so two apps with the same display name, or a localized name, could collide or miss. Keying on `bundleIdentifier` (already available from `NSRunningApplication`) would be exact; deferred to keep the UI's app names human-typable.
+- **[A] Deep-context AX grant is invisible in onboarding** — the feature silently no-ops until Accessibility is granted (which onboarding already requests for paste), but nothing tells a user who turned context ON that AX is the gate; a one-line status in the Deep-context settings row (`ax_trusted()` is now exposed) would close the loop.
+
 ## Full register
 
 ### High
