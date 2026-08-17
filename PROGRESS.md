@@ -2,6 +2,35 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-08-17 15:30 — Kill the "damaged" dialog with NO Apple cert: Homebrew tap + curl installer (branch `feat-brew-cask`, PR open)
+
+**The fourth "FunButton is damaged" hit (v0.1.8) is the last one for brew/curl users. Built a Homebrew tap + cask and a one-line curl installer that both clear `com.apple.quarantine` from our own bundle at install time — so the app opens with no dialog and nobody runs `xattr -cr`. No Developer ID cert, no notarization, no Apple account. Verified for real on the Mac Studio, end to end.**
+
+**Key finding (premise corrected):** `brew install --cask` does **not** strip quarantine by default. Verified on Homebrew 6.0.17 — a plain install leaves `com.apple.quarantine` on the app, and because the alpha's ad-hoc signature is structurally invalid (`spctl`: "code has no resources but signature indicates they must be present"), that quarantine is exactly what macOS reads as "damaged." So the cask removes quarantine explicitly in a `postflight` (touches only `FunButton.app`), and the curl installer removes it inline. Neither weakens Gatekeeper globally.
+
+**Shipped:**
+- **Tap:** `github.com/todddickerson/homebrew-funbutton` (public) with `Casks/funbutton.rb` — version + sha256 of the real v0.1.8 DMG, `depends_on arch: :arm64` + `macos: :monterey`, `livecheck` (github_latest), `postflight` quarantine strip, `uninstall quit:`, `zap trash:` (model store, caches, prefs, saved state, WebKit, HTTPStorages), `caveats` (Mic/Accessibility/Input Monitoring + hotkey).
+- **`scripts/update-cask.sh`** — recomputes the DMG sha256 from the published asset, rewrites the tap's cask, commits + pushes. Idempotent; gh CLI for auth (no `.env` token needed).
+- **`scripts/install.sh`** + `apps/web/app/install.sh/route.ts` — auditable curl installer served at `https://funbutton.ai/install.sh` (text/plain), downloads from the version-agnostic `/download`, no sudo, fails loudly on wrong arch / download failure / running app. `scripts/sync-install-sh.sh` keeps the web copy byte-identical to the source.
+- **Landing (`apps/web/app/page.tsx`):** install section reordered — brew #1 (recommended), curl #2, manual .dmg #3. The `xattr` steps are demoted to the manual path only; the hero's scary "damaged" box is replaced with "one command, no warnings."
+- **Docs:** SIGNING.md (Homebrew is the interim mitigation; signing is still the permanent fix that also clears the manual path); history updated to 4 occurrences.
+
+**Verified on this machine (no faked screenshots — logs + xattr + exit codes):**
+- `brew tap todddickerson/funbutton` + `brew install --cask funbutton` → exit 0; `xattr /Applications/FunButton.app` → only `com.apple.provenance`, **no `com.apple.quarantine`**; `open -a` launches with no dialog; engines up (`embedded STT model loaded "MTL0"`, `llama-server ready`).
+- `brew uninstall --cask funbutton` (keeps user data) and `brew uninstall --zap --cask funbutton` (removes app + models/caches/prefs) both verified; models backed up + restored so no 1.1 GB re-download.
+- `brew style`: clean. `brew audit --cask`: clean (exit 0). `brew audit --cask --new`: 2 residual, both inherent — repo "not notable enough" (homebrew-core submission rule, N/A for a third-party tap) and "signature verification failed" (unsigned alpha; passes only after Developer ID + notarization).
+- `curl -fsSL http://localhost/install.sh` served `text/plain; charset=utf-8`, body byte-identical to `scripts/install.sh`; ran `scripts/install.sh` end-to-end → installed, no quarantine, launched.
+- Gates: `apps/web` tsc + eslint clean; `apps/worker` tsc clean; `cargo fmt --check` clean; macOS-26 crash-guard grep = doc comments only. **No Rust/worker source touched**, so cargo build/test/clippy are unaffected.
+
+**Next (Todd):** review the PR, then **deploy `apps/web` to prod** so `funbutton.ai/install.sh` and the reordered landing go live (not deployed by me — preview only). Permanent fix is still Developer ID signing (SIGNING.md Steps 1–2, human-gated).
+
+### Ship checklist (every release) — now includes the tap
+1. Bump version, build the DMG, cut the GitHub release (existing flow).
+2. `scripts/update-landing-version.sh` — repoint funbutton.ai + redeploy.
+3. **`scripts/update-cask.sh` — refresh the Homebrew tap's cask (version + sha256) and push.** Do NOT skip: a stale cask serves an old version or a sha256 mismatch that breaks `brew install`.
+4. If `scripts/install.sh` changed, run `scripts/sync-install-sh.sh` and commit the regenerated `installer.json`.
+5. Sanity: `brew upgrade --cask funbutton` on a real Mac picks up the new version with no quarantine.
+
 ## 2026-08-17 14:20 — v0.1.8 SHIPPED: dictation that reads your screen (deep-context + editable per-app modes, public)
 
 **The PR #9 work (deep-context cleanup + editable per-app mode map + forceable Terminal + context-borne injection guard) is now a public release. Cut off `main` (b80d944), real build + real install QA on the Mac Studio, released, landing deployed + verified live.**

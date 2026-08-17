@@ -4,6 +4,53 @@ Improvement opportunities logged by the 15 worker runs and 15 blind-critic runs 
 
 Piece tags: A onboarding · B settings · C pill/HUD · D tray · E dev-first engine · F landing page.
 
+## Distribution — the "damaged" dialog (2026-08-17, branch `feat-brew-cask`)
+
+The "FunButton is damaged and can't be opened" dialog has hit Todd/testers **four**
+times (2026-08-02, 08-14, 08-15, 08-17 on v0.1.8). Every prior answer was
+`xattr -cr` — a conversion killer that trains users to bypass macOS security. This
+branch ships a certificate-free mitigation and, in doing so, corrected a wrong
+premise and found the real root cause.
+
+**Root cause (verified, not assumed):** it is NOT "unsigned + quarantine" alone —
+it's a **structurally invalid ad-hoc signature** plus quarantine. On this machine
+`spctl -a -t exec` / `codesign --verify` report *"code has no resources but
+signature indicates they must be present"* (the bundle's resource seal is broken:
+`Sealed Resources=none`). A quarantined app that fails signature validation is
+what macOS labels "damaged." Remove quarantine (any path) → it launches; the
+broken seal alone is cosmetic on Apple Silicon once not quarantined.
+
+**Premise corrected:** `brew install --cask` does **not** strip quarantine by
+default. On Homebrew 6.0.17 (default `HOMEBREW_CASK_OPTS` unset) a plain cask
+install left `com.apple.quarantine` (value `0381;…;;…`) on the app. The two OSS
+competitors (freeflow, unramble) ship plain casks that "just work" only because
+their bundles are validly signed — ours isn't. So the cask must strip quarantine
+explicitly (`postflight`), which it now does; the curl installer does it inline.
+
+**Shipped fix:** tap `todddickerson/homebrew-funbutton` (`brew install --cask
+todddickerson/funbutton/funbutton`), `scripts/install.sh` (`curl … | bash`),
+`scripts/update-cask.sh` (release sync), landing reorder (brew → curl → manual).
+Proven end-to-end: post-install `xattr` shows no quarantine, app launches, engines
+up; uninstall + zap verified.
+
+**Residual / follow-up findings:**
+- **[dist] The manual .dmg path is still exposed.** Browser-stamped quarantine +
+  broken seal = "damaged" for anyone who downloads the .dmg directly. Only a real
+  Developer ID signature + notarization closes it (SIGNING.md). Brew/curl users are
+  covered; direct-download users are not.
+- **[dist] Fix the ad-hoc signature seal even before Developer ID.** The bundle
+  ships with `Sealed Resources=none` (linker-signed, no `_CodeSignature`). A proper
+  ad-hoc `codesign --deep -s -` in the build would make even a quarantined app read
+  as "unverified developer" (right-click-Open) rather than "damaged" — a strictly
+  better failure mode for the manual path. Root-cause build fix, out of scope here.
+- **[dist] `brew audit --cask --new` can't fully pass while unsigned.** Two checks
+  fail inherently: repo "not notable enough" (homebrew-core submission rule, N/A for
+  a third-party tap) and "signature verification failed" (needs notarization). Plain
+  `brew audit --cask` is clean.
+- **[dist] Homebrew 6.x tap-trust may prompt some users.** This Homebrew warns about
+  untrusted third-party taps; the install still completed. Worth watching whether
+  stable releases make it a hard gate for `brew tap`.
+
 ## Top 14 (curated — merged near-duplicates, ranked by product impact)
 
 1. **[F] No real product visual anywhere on the landing page** (raised 4×) — the animated terminal demo is good, but there is no app screenshot, pill GIF, or menu-bar shot; Handy and VoiceInk both lead with the product itself. Biggest credibility gap on the page.
