@@ -31,77 +31,130 @@ pub enum FrontApp {
     Unknown,
 }
 
-/// In-flight frontmost-app detection. Detection runs on its own thread so
-/// the pipeline is never blocked by it: `wait_up_to` bounds the wait for
-/// the STT-bias decision, and `now_or_unknown` picks up a late arrival at
-/// cleanup time for free. If detection never returns (TCC-stalled
-/// osascript), both degrade to `FrontApp::Unknown` and the thread is
-/// abandoned — it exits on its own when the stalled call finally resolves.
+/// In-flight frontmost-app detection (+ optional deep context). Detection
+/// runs on its own thread so the pipeline is never blocked by it:
+/// `wait_up_to` bounds the wait for the STT-bias decision, and
+/// `now_or_unknown` picks up a late arrival at cleanup time for free. If
+/// detection never returns (TCC-stalled osascript), both degrade to
+/// `FrontApp::Unknown` and the thread is abandoned — it exits on its own when
+/// the stalled call finally resolves.
+///
+/// Deep context (window title / focused role / selected text via
+/// Accessibility) travels on its own channel and is sent *after* the app
+/// name, so the slower AX round-trips can never delay the app classification
+/// that biases STT. `context_now()` reads whatever has arrived, non-blocking.
 pub struct DetectHandle {
-    rx: mpsc::Receiver<FrontApp>,
-    cached: Option<FrontApp>,
+    app_rx: mpsc::Receiver<FrontApp>,
+    app_cached: Option<FrontApp>,
+    ctx_rx: mpsc::Receiver<crate::app_context::FocusContext>,
+    ctx_cached: Option<crate::app_context::FocusContext>,
 }
 
 impl DetectHandle {
-    pub fn spawn() -> Self {
-        Self::spawn_with(FrontApp::detect_blocking)
+    /// Real spawn: native NSWorkspace name+pid on a background thread, the app
+    /// name sent immediately, then — if `capture_context` — the AX focus
+    /// context. The two are on separate channels so an AX read that is slow
+    /// (or wedged) never delays app detection.
+    pub fn spawn(capture_context: bool) -> Self {
+        let (app_tx, app_rx) = mpsc::channel();
+        let (ctx_tx, ctx_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let (app, pid) = FrontApp::detect_blocking_with_pid();
+            let _ = app_tx.send(app);
+            if capture_context {
+                if let Some(pid) = pid {
+                    let ctx = crate::app_context::read_focus_context(pid);
+                    let _ = ctx_tx.send(ctx);
+                }
+            }
+        });
+        DetectHandle {
+            app_rx,
+            app_cached: None,
+            ctx_rx,
+            ctx_cached: None,
+        }
     }
 
-    /// Test seam: run an arbitrary detector on the background thread.
+    /// Test seam: run an arbitrary app detector on the background thread. The
+    /// context channel is closed immediately, so `context_now()` yields `None`
+    /// — exactly the capture-disabled runtime path.
+    #[cfg(test)]
     fn spawn_with<F>(detect: F) -> Self
     where
         F: FnOnce() -> FrontApp + Send + 'static,
     {
-        let (tx, rx) = mpsc::channel();
+        let (app_tx, app_rx) = mpsc::channel();
+        let (_ctx_tx, ctx_rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(detect());
+            let _ = app_tx.send(detect());
         });
-        DetectHandle { rx, cached: None }
+        DetectHandle {
+            app_rx,
+            app_cached: None,
+            ctx_rx,
+            ctx_cached: None,
+        }
     }
 
-    /// Wait for the detection result, but never longer than `timeout`.
+    /// Wait for the app-detection result, but never longer than `timeout`.
     /// Returns `FrontApp::Unknown` on timeout (the result may still be
     /// picked up later via `now_or_unknown`).
     pub fn wait_up_to(&mut self, timeout: Duration) -> FrontApp {
-        if self.cached.is_none() {
-            self.cached = self.rx.recv_timeout(timeout).ok();
+        if self.app_cached.is_none() {
+            self.app_cached = self.app_rx.recv_timeout(timeout).ok();
         }
-        self.cached.clone().unwrap_or(FrontApp::Unknown)
+        self.app_cached.clone().unwrap_or(FrontApp::Unknown)
     }
 
-    /// Whatever is known right now, without waiting: the cached result, a
+    /// Whatever app is known right now, without waiting: the cached result, a
     /// late arrival, or `FrontApp::Unknown`.
     pub fn now_or_unknown(&mut self) -> FrontApp {
-        if self.cached.is_none() {
-            self.cached = self.rx.try_recv().ok();
+        if self.app_cached.is_none() {
+            self.app_cached = self.app_rx.try_recv().ok();
         }
-        self.cached.clone().unwrap_or(FrontApp::Unknown)
+        self.app_cached.clone().unwrap_or(FrontApp::Unknown)
+    }
+
+    /// Whatever focus context has arrived by now, without waiting. `None` when
+    /// capture is disabled, Accessibility is ungranted, the read is still in
+    /// flight, or nothing useful was found. Never blocks the pipeline.
+    pub fn context_now(&mut self) -> Option<crate::app_context::FocusContext> {
+        if self.ctx_cached.is_none() {
+            self.ctx_cached = self.ctx_rx.try_recv().ok();
+        }
+        self.ctx_cached.clone().filter(|c| !c.is_empty())
     }
 }
 
 impl FrontApp {
     /// Preferred path: `NSWorkspace.frontmostApplication` — synchronous,
     /// permission-free (no Automation prompt), and near-zero cost vs the
-    /// 50-150 ms osascript round-trip. NSWorkspace/NSRunningApplication are
-    /// documented thread-safe, and no TIS/TSM layout APIs are involved
-    /// (those SIGTRAP off the main thread on macOS 26).
+    /// 50-150 ms osascript round-trip. Returns the app name *and* its pid (the
+    /// pid is what deep-context AX reads key off of).
+    /// NSWorkspace/NSRunningApplication are documented thread-safe, and no
+    /// TIS/TSM layout APIs are involved (those SIGTRAP off the main thread on
+    /// macOS 26).
     #[cfg(target_os = "macos")]
-    fn frontmost_name_native() -> Option<String> {
+    fn frontmost_name_and_pid_native() -> Option<(String, i32)> {
         let ws = objc2_app_kit::NSWorkspace::sharedWorkspace();
         let app = ws.frontmostApplication()?;
-        app.localizedName().map(|n| n.to_string())
+        let name = app.localizedName().map(|n| n.to_string())?;
+        // `pid_t` is `i32` on darwin; this fn is macos-only so no cast needed.
+        Some((name, app.processIdentifier()))
     }
 
-    /// Blocking detection: native NSWorkspace first, osascript as the
-    /// fallback for the unlikely case the native call yields nothing.
+    /// Blocking detection: native NSWorkspace first (name + pid), osascript as
+    /// the fallback for the unlikely case the native call yields nothing (the
+    /// fallback can't recover a pid, so deep context is skipped there).
     /// Callers on the dictation path must go through `DetectHandle` — the
     /// osascript fallback can stall for minutes under a pending TCC prompt,
     /// and only the handle's timeout protects the pipeline from that.
-    fn detect_blocking() -> Self {
+    fn detect_blocking_with_pid() -> (Self, Option<i32>) {
         #[cfg(target_os = "macos")]
         {
-            if let Some(name) = Self::frontmost_name_native() {
-                return Self::classify(&name);
+            if let Some((name, pid)) = Self::frontmost_name_and_pid_native() {
+                return (Self::classify(&name), Some(pid));
             }
             log::warn!("NSWorkspace returned no frontmost app; falling back to osascript");
             let out = Command::new("osascript")
@@ -113,14 +166,14 @@ impl FrontApp {
             match out {
                 Ok(o) if o.status.success() => {
                     let name = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                    Self::classify(&name)
+                    (Self::classify(&name), None)
                 }
-                _ => FrontApp::Unknown,
+                _ => (FrontApp::Unknown, None),
             }
         }
         #[cfg(not(target_os = "macos"))]
         {
-            FrontApp::Unknown
+            (FrontApp::Unknown, None)
         }
     }
 
@@ -207,6 +260,25 @@ impl FrontApp {
             FrontApp::Other(s) => s.clone(),
             FrontApp::Unknown => "Unknown".into(),
         }
+    }
+
+    /// Lowercased names this app answers to for user per-app override matching:
+    /// its display label plus, for the wrapped variants, the raw OS name. Lets
+    /// a rule keyed on either "VS Code" (the label) or a custom app name the
+    /// user typed (e.g. "Obsidian" → `Other("Obsidian")`) match the running
+    /// app. `Unknown` matches nothing.
+    pub fn match_keys(&self) -> Vec<String> {
+        if matches!(self, FrontApp::Unknown) {
+            return Vec::new();
+        }
+        let mut keys = vec![self.label().to_lowercase()];
+        if let FrontApp::Editor(s) | FrontApp::Other(s) = self {
+            let raw = s.to_lowercase();
+            if !keys.contains(&raw) {
+                keys.push(raw);
+            }
+        }
+        keys
     }
 }
 
@@ -375,11 +447,34 @@ mod tests {
         // fine); what must hold is that the native path never approaches
         // the timeout budget.
         let started = std::time::Instant::now();
-        let _ = FrontApp::frontmost_name_native();
+        let _ = FrontApp::frontmost_name_and_pid_native();
         assert!(
             started.elapsed() < DETECT_TIMEOUT,
             "native NSWorkspace lookup took {:?}",
             started.elapsed()
         );
+    }
+
+    #[test]
+    fn match_keys_cover_label_and_raw_name() {
+        // Canonical apps answer to their label.
+        assert!(c("Cursor").match_keys().contains(&"cursor".to_string()));
+        assert!(c("Ghostty").match_keys().contains(&"terminal".to_string()));
+        // Editor/Other also answer to the raw OS name a user would type.
+        let zed = c("Zed");
+        assert!(zed.match_keys().contains(&"zed".to_string()));
+        let obsidian = c("Obsidian"); // Other("Obsidian")
+        assert!(obsidian.match_keys().contains(&"obsidian".to_string()));
+        // Unknown matches nothing (an override must never apply blindly).
+        assert!(FrontApp::Unknown.match_keys().is_empty());
+    }
+
+    #[test]
+    fn context_channel_is_absent_on_test_spawn() {
+        // The app-only test seam must never surface a context (it stands in
+        // for the capture-disabled runtime path).
+        let mut h = DetectHandle::spawn_with(|| FrontApp::Slack);
+        assert_eq!(h.wait_up_to(Duration::from_secs(2)), FrontApp::Slack);
+        assert!(h.context_now().is_none());
     }
 }

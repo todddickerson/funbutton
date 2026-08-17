@@ -41,7 +41,9 @@ core-foundation = "=0.10.1"
 # native frontmost-app lookup (NSWorkspace.frontmostApplication) — replaces
 # the osascript shell-out on the dictation hot path; already in the tree via
 # Tauri, so this pin adds no new crates
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSWorkspace", "NSRunningApplication"] }
+# `libc` feature exposes NSRunningApplication.processIdentifier (pid_t) — the
+# pid keys the deep-context AX reads; libc is already in the tree (cpal, etc.)
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSWorkspace", "NSRunningApplication", "libc"] }
 # Groq API key at rest in the login Keychain (Security framework underneath)
 keyring = { version = "=3.6.3", features = ["apple-native"] }
 # static CPU+Metal ggml backend compiled into the binary — no shipped dylibs

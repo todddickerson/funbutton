@@ -3,7 +3,7 @@ use crate::cloud::{CleanupOutcome, CloudClient};
 use crate::groq;
 use crate::guard;
 use crate::ollama;
-use crate::state::{AppStateHandle, Backend, ModeOverride, Status, SttBackend};
+use crate::state::{AppStateHandle, Backend, Status, SttBackend};
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -28,6 +28,9 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
         ollama_url,
         ollama_model,
         mode_override,
+        app_mode_overrides,
+        capture_context,
+        context_to_cloud,
         dictionary,
         license_jwt,
         cloud_api_base,
@@ -41,6 +44,9 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
             s.ollama_url.clone(),
             s.ollama_model.clone(),
             s.mode_override,
+            s.app_mode_overrides.clone(),
+            s.capture_context,
+            s.context_to_cloud,
             s.dictionary.clone(),
             s.license_jwt.clone(),
             s.cloud_api_base.clone(),
@@ -51,24 +57,25 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
     let cloud = (!license_jwt.is_empty())
         .then(|| CloudClient::new(cloud_api_base.clone(), license_jwt.clone()));
 
-    // Frontmost-app detection runs on its own thread; its result is only
-    // *required* at cleanup time. The resolved mode also biases the STT
-    // vocabulary prompt, so auto mode grants detection a short bounded head
-    // start (DETECT_TIMEOUT, 400 ms) — never the unbounded osascript wait
-    // that stalled the pipeline ~105 s under a pending TCC prompt. Tradeoff:
-    // if detection misses that window, STT runs without the dev-vocabulary
-    // bias (Unknown → Auto) while the cleanup prompt still picks up a late
-    // result for free via `now_or_unknown`. With the native NSWorkspace
-    // path this is microseconds and the window effectively never misses.
-    let mut detect = crate::app_detect::DetectHandle::spawn();
-    let mode = match mode_override {
-        ModeOverride::Auto => {
-            Mode::from_front_app(&detect.wait_up_to(crate::app_detect::DETECT_TIMEOUT))
-        }
-        ModeOverride::Code => Mode::Code,
-        ModeOverride::Email => Mode::Email,
-        ModeOverride::Slack => Mode::Slack,
-        ModeOverride::Raw => Mode::Raw,
+    // Frontmost-app detection (and, if enabled, deep AX context) runs on its
+    // own thread; its result is only *required* at cleanup time. The resolved
+    // mode also biases the STT vocabulary prompt, so when the front app is
+    // still needed (no global override) detection gets a short bounded head
+    // start (DETECT_TIMEOUT, 400 ms) — never the unbounded osascript wait that
+    // stalled the pipeline ~105 s under a pending TCC prompt. The AX context
+    // read rides a separate channel and never delays this; it's picked up at
+    // cleanup time via `context_now`.
+    let mut detect = crate::app_detect::DetectHandle::spawn(capture_context);
+    let mode = match Mode::from_override(mode_override) {
+        // Global override forces the mode — no need to wait on the app at all.
+        Some(forced) => forced,
+        // Otherwise resolve per-app rule > built-in detection off the front
+        // app (bounded wait for the STT-bias decision).
+        None => cleanup::resolve_mode(
+            mode_override,
+            &app_mode_overrides,
+            &detect.wait_up_to(crate::app_detect::DETECT_TIMEOUT),
+        ),
     };
 
     *state.status.lock() = Status::Transcribing;
@@ -144,14 +151,18 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
     }
     *state.last_transcript.lock() = raw.clone();
 
-    // Detection may have finished while transcription ran — refine auto
-    // mode and take the app label for the receipt and history row. Still
-    // stalled? Unknown, instantly; the pipeline never waits here.
+    // Detection may have finished while transcription ran — refine the mode
+    // (per-app rule / built-in detection) and take the app label for the
+    // receipt and history row. Still stalled? Unknown, instantly; the
+    // pipeline never waits here. A global override keeps the mode it forced.
     let front = detect.now_or_unknown();
     let frontmost = front.label();
-    let mode = match mode_override {
-        ModeOverride::Auto => Mode::from_front_app(&front),
-        _ => mode,
+    // Deep-context: whatever AX context has arrived (None if capture is off,
+    // Accessibility is ungranted, or the read is still in flight).
+    let focus = detect.context_now();
+    let mode = match Mode::from_override(mode_override) {
+        Some(forced) => forced,
+        None => cleanup::resolve_mode(mode_override, &app_mode_overrides, &front),
     };
     let mode_label = match mode {
         Mode::Auto => "auto",
@@ -181,6 +192,53 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
             dict_lines.join("\n")
         ));
     }
+
+    // Deep-context injection. The block biases spellings from the focused
+    // window/selection; it is READ-ONLY reference (see render_context_block).
+    // PRIVACY: `prompt` above is the cloud-safe base (no context). The context
+    // rides `prompt_local` for on-device backends always, and reaches the
+    // cloud BYOK path only if the user opted context into the cloud. The
+    // premium worker path never receives it (it builds its own prompt). We log
+    // only presence booleans — never window titles or selected text.
+    let context_block = focus.as_ref().and_then(cleanup::render_context_block);
+    if log::log_enabled!(log::Level::Debug) {
+        match &focus {
+            Some(f) => log::debug!(
+                "deep-context: title={} role={} selection={} → cloud={}",
+                f.window_title.is_some(),
+                f.focused_role.is_some(),
+                f.selected_text.is_some(),
+                context_to_cloud
+            ),
+            // No context: say whether it's disabled or just Accessibility-blocked,
+            // so a user who turned it on but sees no effect can diagnose it.
+            None if capture_context => log::debug!(
+                "deep-context: no context captured (ax_trusted={})",
+                crate::app_context::ax_trusted()
+            ),
+            None => {}
+        }
+    }
+    // Raw context CONTENT (not the hardening prose) for the runtime guard.
+    let context_text: Option<String> = focus.as_ref().and_then(|f| {
+        let mut parts = Vec::new();
+        if let Some(t) = &f.window_title {
+            parts.push(t.clone());
+        }
+        if let Some(s) = &f.selected_text {
+            parts.push(s.clone());
+        }
+        Some(parts.join(" ")).filter(|s| !s.trim().is_empty())
+    });
+    let prompt_local = match &context_block {
+        Some(cb) => format!("{prompt}{cb}"),
+        None => prompt.clone(),
+    };
+    let prompt_cloud = if context_to_cloud {
+        prompt_local.clone()
+    } else {
+        prompt.clone()
+    };
 
     *state.status.lock() = Status::Cleaning;
 
@@ -232,20 +290,23 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
 
         if try_embedded {
             if let Some(srv) = &embedded {
-                match srv.generate(&prompt, &raw).await {
+                // On-device — always gets the context-enriched prompt.
+                match srv.generate(&prompt_local, &raw).await {
                     Ok(t) => break 'cleanup (t, "embedded"),
                     Err(e) => log::warn!("embedded cleanup failed: {e:#}"),
                 }
             }
         }
         if try_ollama {
-            match ollama::generate(&ollama_url, &ollama_model, &prompt, &raw).await {
+            // On-device — always gets the context-enriched prompt.
+            match ollama::generate(&ollama_url, &ollama_model, &prompt_local, &raw).await {
                 Ok(t) => break 'cleanup (t, "ollama"),
                 Err(e) => log::warn!("ollama cleanup failed: {e:#}"),
             }
         }
         if try_groq {
-            match groq::chat_complete(&api_key, &prompt, &raw).await {
+            // Cloud (BYOK) — context only if the user opted it into the cloud.
+            match groq::chat_complete(&api_key, &prompt_cloud, &raw).await {
                 Ok(t) => break 'cleanup (t, "groq"),
                 Err(e) => log::warn!("groq cleanup failed: {e:#}"),
             }
@@ -257,11 +318,24 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
     };
 
     let cleaned = post_process(cleaned);
+    // Did the deep-context block actually reach the model that produced this
+    // output? Only then is the context guard meaningful. On-device backends
+    // always got it (when captured); Groq BYOK only if opted into the cloud;
+    // the premium worker and raw-passthrough never got it.
+    let context_reached_model = context_text.is_some()
+        && match used {
+            "embedded" | "ollama" => context_block.is_some(),
+            "groq" => context_block.is_some() && context_to_cloud,
+            _ => false,
+        };
     // Runtime instruction-execution guard (defense in depth behind the
     // prompts' prime directive): if the model answered or obeyed the
     // dictation instead of cleaning it, its output is never pasted — the
     // raw transcript is. Identical/near-identical output (including the
-    // raw-passthrough backend) never trips.
+    // raw-passthrough backend) never trips. Then a second, context-specific
+    // check: deep-context cleanup feeds screen text into the prompt (a fresh
+    // injection surface), so a window title that hijacks the output also
+    // falls back to raw.
     let (cleaned, guard) = match guard::detect_instruction_execution(&raw, &cleaned) {
         Some(reason) => {
             log::warn!(
@@ -269,7 +343,25 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
             );
             (raw.trim().to_string(), Some(reason))
         }
-        None => (cleaned, None),
+        None => {
+            let ctx_verdict = if context_reached_model {
+                context_text
+                    .as_deref()
+                    .and_then(|c| guard::detect_context_injection(&raw, &cleaned, c))
+            } else {
+                None
+            };
+            match ctx_verdict {
+                Some(reason) => {
+                    // Never log the context content — just that it fired.
+                    log::warn!(
+                        "context guard tripped ({reason}) on {used}; discarding model output — pasting raw transcript"
+                    );
+                    (raw.trim().to_string(), Some(reason))
+                }
+                None => (cleaned, None),
+            }
+        }
     };
     Ok(PipelineResult {
         raw,
@@ -327,4 +419,67 @@ fn post_process(s: String) -> String {
         }
     }
     stripped
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app_detect::FrontApp;
+    use crate::cleanup::{self, Mode};
+    use crate::history::History;
+    use crate::state::{AppModeRule, AppState, ModeOverride, Settings};
+    use std::sync::Arc;
+
+    /// The exact mode resolution the pipeline runs at the top of `run()`: read
+    /// the settings lock, resolve. `resolve_mode` already applies a global
+    /// override first, so its result equals the pipeline's resolved mode.
+    fn resolve_as_pipeline(state: &AppState, front: &FrontApp) -> Mode {
+        let s = state.settings.lock();
+        cleanup::resolve_mode(s.mode_override, &s.app_mode_overrides, front)
+    }
+
+    /// Proves finding #3's core promise: a per-app override takes effect on the
+    /// very next dictation with NO restart. The pipeline re-reads the shared
+    /// settings lock every run, and `save_settings` mutates that same lock in
+    /// place — so a pin saved between two dictations changes the second one.
+    /// This test drives a real `AppState` through that exact sequence.
+    #[test]
+    fn per_app_override_takes_effect_immediately_no_restart() {
+        let history = Arc::new(History::open(std::path::PathBuf::from(":memory:")).unwrap());
+        let state = AppState::new(Settings::default(), history);
+        let front = FrontApp::Slack;
+
+        // Dictation 1: no pins → built-in detection routes Slack → slack mode.
+        assert_eq!(resolve_as_pipeline(&state, &front), Mode::Slack);
+
+        // User pins Slack → raw in Settings. This is exactly what save_settings
+        // does — mutate the shared lock in place. No app restart, no re-init.
+        {
+            let mut s = state.settings.lock();
+            s.app_mode_overrides.push(AppModeRule {
+                app: "Slack".into(),
+                mode: ModeOverride::Raw,
+            });
+        }
+
+        // Dictation 2 (same AppState, same run): the pin is already in force.
+        assert_eq!(resolve_as_pipeline(&state, &front), Mode::Raw);
+
+        // Reset the pin live (drop the row) → back to built-in on the next run.
+        {
+            let mut s = state.settings.lock();
+            s.app_mode_overrides.clear();
+        }
+        assert_eq!(resolve_as_pipeline(&state, &front), Mode::Slack);
+
+        // A global override live-set beats the per-app map on the next run too.
+        {
+            let mut s = state.settings.lock();
+            s.app_mode_overrides.push(AppModeRule {
+                app: "Slack".into(),
+                mode: ModeOverride::Raw,
+            });
+            s.mode_override = ModeOverride::Terminal;
+        }
+        assert_eq!(resolve_as_pipeline(&state, &front), Mode::Terminal);
+    }
 }
