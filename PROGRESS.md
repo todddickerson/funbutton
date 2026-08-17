@@ -2,6 +2,41 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-08-17 14:20 — v0.1.8 SHIPPED: dictation that reads your screen (deep-context + editable per-app modes, public)
+
+**The PR #9 work (deep-context cleanup + editable per-app mode map + forceable Terminal + context-borne injection guard) is now a public release. Cut off `main` (b80d944), real build + real install QA on the Mac Studio, released, landing deployed + verified live.**
+
+**Release:** https://github.com/todddickerson/funbutton/releases/tag/v0.1.8 (latest, not prerelease, DMG attached). `api/releases/latest` → `v0.1.8`.
+
+**Sizes (v0.1.7 → v0.1.8, measured on this build):**
+- `.app`: 41,402,368 B (39 MB) → **41,406,921 B (39.49 MB)** — +4,553 B. **Zero `.gguf` inside** (verified), no whisper vendor dir, llama vendor is only `llama-server` + `lib*.0.dylib` + LICENSE (no dylib tripling).
+- DMG: 17,037,342 B (16.2 MB) → **17,050,262 B (16.26 MB)** — +12,920 B. `FunButton_0.1.8_aarch64.dmg`, `hdiutil verify` VALID, sha256 `c186f57d…`.
+- The new features are ~4.5 KB of compiled code in the single Rust binary — no bundled assets, so the download is unchanged for the user. Well under the 50 MB gate.
+
+**Gates — all green** (`apps/desktop/src-tauri`, ship-v0.1.8 worktree, vendor/target/node_modules CoW-cloned from main):
+- `cargo check` (10.4s) · `cargo build --release` (2m29s, R1 linker fix held — no `__isPlatformVersionAtLeast`) · `cargo test --release --lib` **78 passed / 0 failed / 7 ignored** (no regression vs main) · `cargo fmt --check` (rc 0) · `cargo clippy --all-targets` **0 warnings** (rc 0) · worker `npx tsc --noEmit` (rc 0).
+- **Keyless offline STT** (no `GROQ_API_KEY`, model from the App Support store) → `"Refactor the auth middleware and open a pull request."`
+- **macOS-26 crash grep** (`rdev`/`TSM`/`TIS`/`UCKeyTranslate`) → 5 hits, **all doc/line comments** (incl. the new `app_context.rs` header); zero live call sites.
+- **Injection guard** vs live bundled Qwen: existing **4/4** caught, plus the **new context-borne cases** (malicious window titles) — neither banned payload (`banana`/`hacked`) ever reached the paste.
+
+**Real install QA (full trail in `RUNTIME-QA-v0.1.8.md`):** replaced `/Applications/FunButton.app` with the new build, `xattr -cr`'d it, installed app reports **0.1.8**, 0 `.gguf`.
+- **Boot + stability:** both hotkey CGEventTaps installed (Input Monitoring), whisper on Metal (89 ms), bundled `llama-server` ready (760 ms); ran **84 s** with **0** crash/error lines and **0** new `.ips`.
+- **Quit fix holds:** 2× AppleEvent quit (`osascript … quit`, rc 0) → ordered teardown with `ggml_metal_free` **before** exit, app + llama child gone every time, **0 new `.ips`, 0 orphan llama-server**.
+- **Deep-context does something (release build, live Qwen, temp 0):** utterance `"the click funnels webhook keeps failing"` + window `"ClickFunnels — webhooks.ts"` → no-context `"The click funnel webhook is failing."` vs **with-context `"The ClickFunnels webhook is failing."`** The `no context` arm is the exact `capture_context`-off path, so this is the with-vs-disabled pair.
+- **Per-app override + Terminal force:** passing `pipeline::per_app_override_takes_effect_immediately_no_restart` (real `AppState`, settings-lock in place): Slack→slack, pin Slack→raw → raw (no restart), clear → slack, global override → **terminal**. Resolution `global > per-app > built-in`; 6 unit tests pin it.
+- **`capture_context` toggle disables capture:** wired `settings → DetectHandle::spawn(capture_context)`; when off, the AX read never runs (`app_detect.rs:64`), `context_now()` → `None` (unit test `context_channel_is_absent_on_test_spawn`), so no context block reaches the prompt.
+
+**BLOCKED (human, none faked):** full real-mic dictation, paste into a focused app, the *live* AX read returning real window titles, and eyes-on Settings/tray/pill — the fresh ad-hoc build's cdhash resets Mic/Accessibility TCC, and `screencapture` is all-black on this machine (Screen Recording ungranted to the shell) so no UI shots were taken or faked. Every pipeline stage is proven green independently; exact human steps in the QA doc.
+
+**Landing (funbutton.ai) — deployed + verified live:**
+- `bash scripts/update-landing-version.sh` → `version.ts` → 0.1.8, committed + pushed to `main`, deployed to prod + aliased to funbutton.ai, **`~/clawd/memory/funbutton-landing-state.json` written** (`{"version":"v0.1.8","dmg":"FunButton_0.1.8_aarch64.dmg",…}`, 14:18:54Z).
+- Added a **context-aware cleanup mention as the dev-first wedge** (step 03 + the terminal-demo caption): "it reads the window you're in, so your identifiers and jargon come out spelled right — and that context stays on your Mac, never logged." Punk/dev-first voice, no slop.
+- `curl -sIL -o /dev/null -w '%{http_code}' https://funbutton.ai/download` → **200**.
+- `curl -sIL https://funbutton.ai/download | grep filename%3D` → **`FunButton_0.1.8_aarch64.dmg`**.
+- Live page shows **0.1.8**, the context wedge copy, **0** stale 0.1.7 references, and the first-open unblock callout with **both** `xattr` commands.
+
+**Still:** arm64-only, unsigned (Developer ID cert pending — see `SIGNING.md`), GPLv3.
+
 ## 2026-08-17 13:05 — Deep-context cleanup + editable per-app modes (branch `feat-context-and-modes`, PR open)
 
 **Built the two highest-impact remaining gauntlet items in one branch (they share the per-app intelligence layer): #2 deep-context cleanup and #3 editable per-app mode map, plus #9 forceable terminal mode. No release, no landing deploy, no comms — per the brief.**
