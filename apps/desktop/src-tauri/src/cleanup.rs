@@ -987,9 +987,9 @@ mod tests {
     /// deterministic differential.
     ///
     /// Start the server first (bundled Qwen from the Application Support store
-    /// or vendor/):
+    /// — APP_IDENTIFIER is `ai.funbutton.desktop` — or vendor/):
     ///   vendor/llama/llama-server --host 127.0.0.1 --port 18321 \
-    ///     --model "$HOME/Library/Application Support/ai.funbutton/models/qwen2.5-1.5b-instruct-q4_k_m.gguf" \
+    ///     --model "$HOME/Library/Application Support/ai.funbutton.desktop/models/qwen2.5-1.5b-instruct-q4_k_m.gguf" \
     ///     --ctx-size 4096 --no-webui
     /// then:
     ///   FUNBUTTON_QA_LLM_URL=http://127.0.0.1:18321 \

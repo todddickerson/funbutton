@@ -69,8 +69,10 @@ TRANSCRIPT: "Refactor the auth middleware and open a pull request."
 test result: ok. 1 passed; 0 failed
 ```
 
-Model resolved from `~/Library/Application Support/ai.funbutton/models/whisper-base.en-Q8_0.gguf`
-(the Application Support store, not the bundle). GROQ key unset → fully offline.
+Model resolved via `models_dir()` from
+`~/Library/Application Support/ai.funbutton.desktop/models/whisper-base.en-Q8_0.gguf`
+(`APP_IDENTIFIER = ai.funbutton.desktop` — the real Application Support store,
+not the bundle, not the vendor fallback). GROQ key unset → fully offline.
 
 ## Check 9 — THE feature: a window title measurably changes cleanup output
 
@@ -81,7 +83,7 @@ at temperature 0 for determinism:
 
 ```
 vendor/llama/llama-server --host 127.0.0.1 --port 18321 \
-  --model "$HOME/Library/Application Support/ai.funbutton/models/qwen2.5-1.5b-instruct-q4_k_m.gguf" \
+  --model "$HOME/Library/Application Support/ai.funbutton.desktop/models/qwen2.5-1.5b-instruct-q4_k_m.gguf" \
   --ctx-size 4096 --no-webui
 FUNBUTTON_QA_LLM_URL=http://127.0.0.1:18321 \
   cargo test --release context_changes_cleanup_on_live_model -- --ignored --nocapture
@@ -211,10 +213,11 @@ macOS 26). No layout-API call sites.
    render, dictate into Cursor with a `Cursor → raw` pin and confirm it routes
    raw immediately.
 
-## Observed machine-state note (not a code defect)
+## Model store path note
 
-Mid-QA the entire `~/Library/Application Support/ai.funbutton` directory
-disappeared once (no FunButton process was running and this branch has no
-delete path — likely another process/cleanup on the machine). The store was
-restored from the byte-identical vendored copies so all model-backed checks ran
-against the real Application Support store.
+The on-device store is `~/Library/Application Support/ai.funbutton.desktop/models/`
+(`models::APP_IDENTIFIER = "ai.funbutton.desktop"`). It was intact throughout
+QA. The `.app`/live-server runs pointed `FUNBUTTON_MODELS_DIR` at a scratch copy
+of the byte-identical bundled Qwen to keep the runs hermetic; the offline STT
+check (7) resolved `models_dir()` to the real `ai.funbutton.desktop` store
+directly. No files of Todd's were modified or deleted.
