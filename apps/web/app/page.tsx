@@ -153,32 +153,30 @@ function Hero() {
         reads you.
       </p>
 
-      {/* First-open unblock, right at the button. macOS mislabels an unsigned app as
-          "damaged"; the fix needs BOTH the .dmg and the .app cleared — Todd hit the
-          DMG-level dialog when only the .app command was given. */}
-      <div className="mt-5 max-w-xl rounded-md border border-amber-500/30 bg-amber-500/[0.06] p-3.5">
-        <p className="font-mono text-[11px] leading-relaxed text-amber-200/90">
-          <span className="font-bold">First open on macOS?</span> If you see{" "}
-          <span className="text-amber-100">&ldquo;FunButton is damaged and can&apos;t be
-          opened&rdquo;</span>, it isn&apos;t. That&apos;s macOS mislabeling an unsigned app.
-          Clear quarantine on the <span className="text-amber-100">download</span> and the{" "}
-          <span className="text-amber-100">app</span>, then open it:
+      {/* Brew-first happy path. The unsigned-alpha "damaged" dialog only hits the
+          MANUAL .dmg download; brew and the curl one-liner clear quarantine for
+          you, so most people never see a warning or touch a terminal. Framing
+          inverted on purpose — lead with the one command, not the scary xattr. */}
+      <div className="mt-5 max-w-xl rounded-md border border-neutral-800 bg-neutral-900/40 p-3.5">
+        <p className="font-mono text-[11px] leading-relaxed text-neutral-300">
+          <span className="font-bold text-neutral-100">One command, no warnings.</span>{" "}
+          Install with Homebrew — no &ldquo;damaged&rdquo; dialog, no{" "}
+          <code className="text-neutral-200">xattr</code>, no Apple account:
         </p>
         <pre className="mt-2.5 overflow-x-auto rounded bg-black/40 p-2.5 font-mono text-[11px] leading-relaxed text-neutral-200">
           <code>
-            <span className="text-red-400">$</span> xattr -cr ~/Downloads/FunButton_{APP_VERSION}_aarch64.dmg{"\n"}
-            <span className="text-red-400">$</span> xattr -cr /Applications/FunButton.app
+            <span className="text-red-400 select-none">$ </span>brew install --cask todddickerson/funbutton/funbutton
           </code>
         </pre>
         <p className="mt-2 font-mono text-[10px] text-neutral-500">
-          Real signing is on the way (Developer ID cert pending) — see{" "}
+          No Homebrew? A one-line{" "}
+          <code className="text-neutral-400">curl</code> installer and the manual
+          .dmg are{" "}
           <a
-            href={`${REPO_URL}/blob/main/SIGNING.md`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline underline-offset-2 decoration-neutral-700 hover:text-amber-300"
+            href="#install"
+            className="underline underline-offset-2 decoration-neutral-700 hover:text-neutral-300"
           >
-            SIGNING.md
+            right below
           </a>
           .
         </p>
@@ -505,34 +503,130 @@ function OpenSourceInstall() {
           </a>
         </div>
 
-        <div className="min-w-0 rounded-lg border border-neutral-800 bg-[#0d0d0d] overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-neutral-800 bg-neutral-900/60">
-            <span className="font-mono text-[11px] text-neutral-500">install — 60 seconds</span>
+        <div className="min-w-0 space-y-3">
+          <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-neutral-500">
+            install — pick one
+          </p>
+
+          {/* 1 — Homebrew: primary path, clears quarantine for you */}
+          <InstallMethod
+            n="1"
+            title="Homebrew"
+            badge="recommended"
+            command="brew install --cask todddickerson/funbutton/funbutton"
+            note="No “damaged” dialog, no xattr, no Apple account. Update anytime with brew upgrade --cask funbutton."
+          />
+
+          {/* 2 — curl one-liner: same result without Homebrew */}
+          <InstallMethod
+            n="2"
+            title="curl one-liner"
+            command="curl -fsSL https://funbutton.ai/install.sh | bash"
+            note={
+              <>
+                No Homebrew? One line, same result — and you can read exactly what
+                it does first at{" "}
+                <a
+                  href="/install.sh"
+                  className="underline underline-offset-2 decoration-neutral-700 hover:text-neutral-300"
+                >
+                  funbutton.ai/install.sh
+                </a>
+                .
+              </>
+            }
+          />
+
+          {/* 3 — manual .dmg: the ONLY path that still needs the xattr step */}
+          <div className="rounded-lg border border-neutral-800 bg-[#0d0d0d] p-4">
+            <div className="flex items-center gap-2 mb-2.5">
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded bg-neutral-800 font-mono text-[11px] text-neutral-300">
+                3
+              </span>
+              <span className="font-mono text-[13px] text-neutral-200">Manual .dmg</span>
+              <span className="font-mono text-[10px] text-neutral-600">the DIY path</span>
+            </div>
+            <a
+              href={DMG_URL}
+              className="inline-flex items-center gap-2 px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-100 font-mono text-[12px] rounded transition"
+            >
+              ↓ Download .dmg <span className="text-neutral-400">(Apple Silicon)</span>
+            </a>
+            <p className="mt-3 font-mono text-[11px] leading-relaxed text-neutral-500">
+              This build is unsigned, so macOS mislabels the download as
+              &ldquo;damaged&rdquo; until you clear quarantine on both the .dmg and
+              the app:
+            </p>
+            <pre className="mt-2 overflow-x-auto rounded bg-black/40 p-2.5 font-mono text-[11px] leading-relaxed text-neutral-200">
+              <code>
+                <span className="text-red-400 select-none">$ </span>xattr -cr ~/Downloads/FunButton_{APP_VERSION}_aarch64.dmg{"\n"}
+                <span className="text-red-400 select-none">$ </span>xattr -cr /Applications/FunButton.app
+              </code>
+            </pre>
+            <p className="mt-2 font-mono text-[10px] leading-relaxed text-neutral-600">
+              Brew and the one-liner already do this for you — this step is{" "}
+              <span className="text-neutral-500">only</span> for the manual
+              download. Real signing is on the way (Developer ID pending): see{" "}
+              <a
+                href={`${REPO_URL}/blob/main/SIGNING.md`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-2 decoration-neutral-700 hover:text-neutral-400"
+              >
+                SIGNING.md
+              </a>
+              .
+            </p>
           </div>
-          <div className="p-4 sm:p-5 font-mono text-[13px] leading-relaxed overflow-x-auto">
-            <p className="text-neutral-600">
-              # 1. unsigned alpha — clear quarantine on the download:
-            </p>
-            <p className="text-neutral-100 whitespace-nowrap">
-              <span className="text-red-400">$</span> xattr -cr ~/Downloads/FunButton_{APP_VERSION}_aarch64.dmg
-            </p>
-            <p className="text-neutral-600 mt-2">
-              # 2. open it, drag FunButton to /Applications, then clear the app too:
-            </p>
-            <p className="text-neutral-100 whitespace-nowrap">
-              <span className="text-red-400">$</span> xattr -cr /Applications/FunButton.app
-            </p>
-            <p className="text-neutral-600 mt-2">
-              # 3. grant Microphone · Accessibility · Input Monitoring
-            </p>
-            <p className="text-neutral-600 mt-2">
-              # 4. first run downloads the models (~1.1 GB, SHA-256-verified, resumable)
-            </p>
-            <p className="text-neutral-600 mt-2"># 5. hold fn. talk. done.</p>
-          </div>
+
+          <p className="font-mono text-[10px] leading-relaxed text-neutral-600">
+            Then: grant Microphone · Accessibility · Input Monitoring, pick your
+            hotkey, hold it, talk. The on-device models (~1.1 GB) fetch once on
+            first run.
+          </p>
         </div>
       </div>
     </section>
+  );
+}
+
+/** One install method row — a numbered command block with a one-line note.
+ *  Used for the brew and curl paths; the manual .dmg gets its own block because
+ *  it carries the download button and the demoted xattr step. */
+function InstallMethod({
+  n,
+  title,
+  badge,
+  command,
+  note,
+}: {
+  n: string;
+  title: string;
+  badge?: string;
+  command: string;
+  note: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border border-neutral-800 bg-[#0d0d0d] p-4">
+      <div className="flex items-center gap-2 mb-2.5">
+        <span className="inline-flex h-5 w-5 items-center justify-center rounded bg-neutral-800 font-mono text-[11px] text-neutral-300">
+          {n}
+        </span>
+        <span className="font-mono text-[13px] text-neutral-200">{title}</span>
+        {badge && (
+          <span className="rounded bg-red-500/15 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-red-300">
+            {badge}
+          </span>
+        )}
+      </div>
+      <pre className="overflow-x-auto rounded bg-black/40 p-2.5 font-mono text-[12px] leading-relaxed text-neutral-100">
+        <code>
+          <span className="text-red-400 select-none">$ </span>
+          {command}
+        </code>
+      </pre>
+      <p className="mt-2 font-mono text-[11px] leading-relaxed text-neutral-500">{note}</p>
+    </div>
   );
 }
 
