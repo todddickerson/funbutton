@@ -314,7 +314,9 @@ function TerminalDemo() {
 
       <p className="mt-4 font-mono text-xs text-neutral-600 max-w-2xl leading-relaxed">
         Self-corrections resolved. Fillers gone. “dash m” becomes <code>-m</code>. Code mode
-        knows you meant a flag; prose mode exists for the humans you Slack.
+        knows you meant a flag; prose mode exists for the humans you Slack. It also reads the
+        window you&apos;re in, so your identifiers and jargon come out spelled right — and that
+        context stays on your Mac, never logged.
       </p>
     </section>
   );
@@ -367,7 +369,7 @@ function HowItWorks() {
     {
       n: "03",
       title: "A local LLM cleans it up",
-      body: "An on-device model kills the fillers, resolves your self-corrections, and formats per mode: code, commit, prose. Swap it for a smaller/faster or bigger/sharper one any time.",
+      body: "An on-device model kills the fillers, resolves your self-corrections, and reads what's on your screen — the focused window, the file, your selection — so identifiers like getUserById and brand names come out spelled the way your code already spells them. Pin the mode per app or force Terminal; swap the model any time.",
     },
     {
       n: "04",
