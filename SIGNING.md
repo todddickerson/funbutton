@@ -23,6 +23,41 @@ that is automated.
 
 ---
 
+## Interim fix that's live now: Homebrew + curl (no cert required)
+
+Until the Developer ID cert lands, the "damaged" dialog is already solved for the
+paths most people use — with **no** signature, notarization, or Apple account:
+
+- **Homebrew (recommended):**
+  `brew install --cask todddickerson/funbutton/funbutton`
+- **curl one-liner:**
+  `curl -fsSL https://funbutton.ai/install.sh | bash`
+
+Both install FunButton and clear `com.apple.quarantine` from *our own* bundle, so
+the app opens with no warning and nobody runs `xattr -cr`.
+
+One myth to kill: **Homebrew does NOT strip quarantine by default.** Verified on
+this machine (Homebrew 6.x) — a plain `brew install --cask` leaves
+`com.apple.quarantine` on the app, and because the alpha's ad-hoc signature is
+structurally invalid (`spctl` reports "code has no resources but signature
+indicates they must be present"), that quarantine is exactly what triggers
+"damaged." So the fix is explicit, not incidental:
+
+- the tap's cask (`github.com/todddickerson/homebrew-funbutton`) removes
+  quarantine in a `postflight` that touches only `FunButton.app`;
+- the curl installer (`scripts/install.sh`) removes it inline after copying.
+
+Neither disables Gatekeeper globally, and both target our bundle alone. The cask
+is refreshed every release by `scripts/update-cask.sh`.
+
+**This does not replace signing.** The one path still exposed is the **manual
+.dmg download** — the browser stamps quarantine on it and macOS still says
+"damaged" there until `xattr -cr`. Signing + notarization is the permanent fix
+that also clears the manual path; when it lands, remove the cask's `postflight`,
+the installer's `xattr` line, and the landing page's manual-download note.
+
+---
+
 ## What already exists (no new purchase needed)
 
 This machine has:
@@ -226,11 +261,14 @@ notes when this lands.
 
 ## History — why this doc exists
 
-The "damaged" dialog has burned three separate sessions:
+The "damaged" dialog has burned four separate sessions:
 
 - **2026-08-02** — Sanzone couldn't open the app at all
 - **2026-08-14** — Todd hit it on his own download
 - **2026-08-15** — Todd hit it again, on the DMG itself
+- **2026-08-17** — Todd hit it a fourth time, on v0.1.8
 
 Each time the workaround was `xattr -cr`. Each time it cost a session and made a
-working product look broken.
+working product look broken. The fourth time is what triggered the Homebrew tap +
+curl installer above, so brew/curl users never see it again — the manual .dmg is
+the only path left waiting on real signing.
