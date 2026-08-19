@@ -52,6 +52,15 @@ If macOS Gatekeeper blocks the unsigned build: `sudo xattr -cr /Applications/Fun
 
 **Note on transcription:** Whisper transcription is *not* bundled yet. Free-tier users still need a Groq key OR a FunButton license for the speech-to-text step. The cleanup model is fully local. Bundled Whisper is on the V1.2 roadmap.
 
+### Install with a coding agent
+
+Live in Claude Code, OpenClaw, Cursor, Codex, or Hermes? Hand the install to your agent. Paste the prompt in [`AGENT-INSTALL.md`](AGENT-INSTALL.md) and it will install FunButton (brew cask first, curl one-liner, then manual .dmg), verify the app launches, surface the ~1.1 GB first-run model download, and hand the three macOS permission grants (Microphone, Accessibility, Input Monitoring) back to you — no agent can grant those.
+
+Agents should fetch the machine-readable contract instead of scraping the site:
+
+- Install contract: <https://funbutton.ai/install.json> (versioned schema: latest version, DMG url + SHA-256, install methods, required permissions, model size, a `verify` block)
+- Discovery: <https://funbutton.ai/llms.txt>
+
 ## Use
 
 1. Hold **Right Option**.

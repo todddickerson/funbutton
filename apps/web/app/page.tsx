@@ -584,9 +584,84 @@ function OpenSourceInstall() {
             hotkey, hold it, talk. The on-device models (~1.1 GB) fetch once on
             first run.
           </p>
+
+          <AgentInstall />
         </div>
       </div>
     </section>
+  );
+}
+
+/** Compact secondary path: hand the install to a coding agent. Deliberately quieter
+ *  than the numbered methods above — brew stays the primary human path. The copy
+ *  button drops a short, model-agnostic prompt that points the agent at the
+ *  machine-readable contract (/install.json) and AGENT-INSTALL.md. */
+const AGENT_PROMPT =
+  "Install FunButton on my Mac (macOS, Apple Silicon). Follow " +
+  "https://funbutton.ai/install.json (machine-readable) and " +
+  "https://github.com/todddickerson/funbutton/blob/main/AGENT-INSTALL.md. " +
+  "Prefer the Homebrew cask, verify the app launches, surface the ~1.1 GB " +
+  "first-run model download, and hand the macOS permission grants (Microphone, " +
+  "Accessibility, Input Monitoring) back to me — you can't grant those yourself.";
+
+function AgentInstall() {
+  return (
+    <div className="mt-1 rounded-lg border border-neutral-800/70 bg-[#0b0b0b] p-4">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <span className="font-mono text-[11px] uppercase tracking-[0.15em] text-neutral-400">
+          installing with a coding agent?
+        </span>
+        <CopyButton text={AGENT_PROMPT} label="copy prompt" />
+      </div>
+      <p className="font-mono text-[11px] leading-relaxed text-neutral-500 mb-2.5">
+        Paste this into Claude Code, OpenClaw, Cursor, Codex, or Hermes — it installs
+        and verifies, then hands the macOS permission grants back to you.
+      </p>
+      <pre className="overflow-x-auto rounded bg-black/40 p-2.5 font-mono text-[11px] leading-relaxed text-neutral-300 whitespace-pre-wrap break-words">
+        <code>{AGENT_PROMPT}</code>
+      </pre>
+      <p className="mt-2.5 font-mono text-[10px] leading-relaxed text-neutral-600">
+        Or point the agent straight at the machine-readable contract:{" "}
+        <a
+          href="/install.json"
+          className="underline underline-offset-2 decoration-neutral-700 hover:text-neutral-400"
+        >
+          funbutton.ai/install.json
+        </a>{" "}
+        ·{" "}
+        <a
+          href="/llms.txt"
+          className="underline underline-offset-2 decoration-neutral-700 hover:text-neutral-400"
+        >
+          llms.txt
+        </a>
+      </p>
+    </div>
+  );
+}
+
+/** Clipboard button styled for the terminal aesthetic — text label, no icon dep,
+ *  no emoji. Flips to a confirmation for ~1.5s after a successful copy. */
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch {
+          // Clipboard API can be blocked (insecure context / denied permission);
+          // leave the visible prompt so it can still be selected and copied by hand.
+        }
+      }}
+      className="shrink-0 rounded border border-neutral-700 px-2 py-1 font-mono text-[10px] text-neutral-300 hover:border-red-400 hover:text-red-400 transition"
+      aria-label={copied ? "Copied to clipboard" : label}
+    >
+      {copied ? "copied" : label}
+    </button>
   );
 }
 
