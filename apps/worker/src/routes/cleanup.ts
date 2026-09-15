@@ -28,6 +28,7 @@ app.post('/', async (c) => {
   const transcript = body.transcript ?? '';
   const mode = body.mode ?? 'auto';
   const dictionary = body.dictionary ?? [];
+  const devDictionary = body.dev_dictionary ?? [];
 
   if (!model || !transcript) {
     return c.json({ error: 'missing_fields', required: ['model', 'transcript'] }, 400);
@@ -72,7 +73,7 @@ app.post('/', async (c) => {
 
   let result;
   try {
-    result = await callProvider({ model, transcript, mode, dictionary, env: c.env });
+    result = await callProvider({ model, transcript, mode, dictionary, devDictionary, env: c.env });
   } catch (e) {
     if (e instanceof ProviderError) {
       return c.json(

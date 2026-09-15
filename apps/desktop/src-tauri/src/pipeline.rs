@@ -111,7 +111,10 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
                 )
             }
             SttSource::Cloud => match &cloud {
-                Some(cli) => ("cloud", cli.transcribe(wav.clone()).await),
+                Some(cli) => (
+                    "cloud",
+                    cli.transcribe(wav.clone(), stt_prompt.as_deref()).await,
+                ),
                 None => continue,
             },
             SttSource::GroqByok => {
@@ -257,15 +260,34 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
             } else {
                 mode_label
             };
+            // Built-in dev vocabulary rides the cloud cleanup only in dev modes,
+            // so the premium path normalizes dev terms like the on-device path
+            // (pipeline.rs's DEV VOCABULARY block). DEV_DICTIONARY stays the
+            // single source of truth — the Worker keeps no copy of it.
+            let cloud_dev_dict: Vec<String> = if mode.is_dev() {
+                cleanup::DEV_DICTIONARY
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect()
+            } else {
+                Vec::new()
+            };
             match cli
-                .cleanup(&premium_model, &raw, cloud_mode, &dictionary)
+                .cleanup(
+                    &premium_model,
+                    &raw,
+                    cloud_mode,
+                    &dictionary,
+                    &cloud_dev_dict,
+                )
                 .await
             {
                 Ok(CleanupOutcome::Ok { text, .. }) => break 'cleanup (text, "cloud"),
                 Ok(CleanupOutcome::CapExceeded) => {
                     log::info!("cloud cap exceeded — falling back to fast tier on cloud");
-                    if let Ok(CleanupOutcome::Ok { text, .. }) =
-                        cli.cleanup("fast", &raw, cloud_mode, &dictionary).await
+                    if let Ok(CleanupOutcome::Ok { text, .. }) = cli
+                        .cleanup("fast", &raw, cloud_mode, &dictionary, &cloud_dev_dict)
+                        .await
                     {
                         break 'cleanup (text, "cloud-fallback");
                     }
