@@ -1,11 +1,16 @@
 import type { Env, ModelPref, Mode } from '../types';
-import { systemPrompt, withDictionary } from './prompts';
+import { systemPrompt, withDevVocabulary, withDictionary } from './prompts';
 
 interface CleanupArgs {
   model: ModelPref;
   transcript: string;
   mode: Mode;
   dictionary: string[];
+  // Built-in developer vocabulary, sent by the desktop app (its Rust
+  // `DEV_DICTIONARY` is the single source of truth — deliberately NOT copied
+  // into the worker) in code mode so the premium cloud path normalizes dev
+  // terms the same way the free on-device path does.
+  devDictionary: string[];
   env: Env;
 }
 
@@ -14,7 +19,13 @@ export interface CleanupResult {
 }
 
 export async function callProvider(args: CleanupArgs): Promise<CleanupResult> {
-  const sys = withDictionary(systemPrompt(args.mode), args.dictionary);
+  // Mirror the desktop's local prompt build (pipeline.rs): dev vocabulary
+  // block first (dev modes only), then the user dictionary, which outranks it.
+  const devDict = args.mode === 'code' ? args.devDictionary : [];
+  const sys = withDictionary(
+    withDevVocabulary(systemPrompt(args.mode), devDict),
+    args.dictionary
+  );
   switch (args.model) {
     case 'fast':
       return callGroqLlama(sys, args.transcript, args.env);
@@ -126,7 +137,11 @@ async function callOpenAI(
 export async function transcribeAudio(
   bytes: ArrayBuffer,
   contentType: string,
-  env: Env
+  env: Env,
+  // whisper initial-prompt vocabulary bias (user dictionary + dev terms),
+  // built by the desktop app's `build_stt_prompt`. Same `prompt` field the
+  // BYOK path uses (groq.rs). Cloud users get the same dev-term accuracy.
+  prompt?: string
 ): Promise<{ text: string }> {
   // Groq Whisper Turbo expects multipart/form-data.
   const ext = contentType.includes('flac')
@@ -139,6 +154,10 @@ export async function transcribeAudio(
   fd.append('model', 'whisper-large-v3-turbo');
   fd.append('response_format', 'json');
   fd.append('temperature', '0');
+  const trimmed = prompt?.trim();
+  if (trimmed) {
+    fd.append('prompt', trimmed);
+  }
 
   const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
     method: 'POST',

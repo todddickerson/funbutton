@@ -8,6 +8,20 @@ import { countWords } from '../lib/words';
 const app = new Hono<{ Bindings: Env }>();
 
 const MAX_BYTES = 25 * 1024 * 1024;
+const MAX_STT_PROMPT_CHARS = 4000;
+
+function decodeSttPrompt(header: string | undefined): string | undefined {
+  if (!header) return undefined;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(header);
+  } catch {
+    return undefined; // malformed encoding — drop the bias, still transcribe
+  }
+  const trimmed = decoded.trim();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, MAX_STT_PROMPT_CHARS);
+}
 
 app.post('/', async (c) => {
   const auth = await authenticate(c);
@@ -29,8 +43,15 @@ app.post('/', async (c) => {
     return c.json({ error: 'audio_too_large', max_bytes: MAX_BYTES }, 413);
   }
 
+  // whisper vocabulary bias (user dictionary + dev terms), built by the desktop
+  // app's `build_stt_prompt` and sent percent-encoded in a header (the body is
+  // raw audio). Decode defensively: a malformed value must not fail the whole
+  // transcription — we just drop the bias. Capped well above the client's
+  // ~600-char budget; whisper ignores tokens past ~224 anyway.
+  const sttPrompt = decodeSttPrompt(c.req.header('X-Funbutton-Stt-Prompt'));
+
   try {
-    const { text } = await transcribeAudio(bytes, contentType, c.env);
+    const { text } = await transcribeAudio(bytes, contentType, c.env, sttPrompt);
     const words = countWords(text);
     return c.json({ text, duration_ms: Date.now() - t0, words });
   } catch (e) {
