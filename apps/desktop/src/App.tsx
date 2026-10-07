@@ -1177,7 +1177,7 @@ interface LicensePanelProps {
 
 const PREMIUM_MODELS: { value: PremiumModel; label: string; rate: string }[] = [
   { value: "fast", label: "Fast (free)", rate: "Groq Llama 3.3 · included" },
-  { value: "premium-haiku", label: "Haiku 4.5", rate: "$0.40 / 10K words · best $/quality" },
+  { value: "premium-haiku", label: "Haiku 5.5", rate: "$0.40 / 10K words · best $/quality" },
   { value: "premium-sonnet", label: "Sonnet 4.7", rate: "$0.60 / 10K words · long-form" },
   { value: "premium-opus", label: "Opus 4.7", rate: "$0.99 / 10K words · reasoning" },
   { value: "premium-gpt41", label: "GPT-4.1", rate: "$0.50 / 10K words · alt provider" },

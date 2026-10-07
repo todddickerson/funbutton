@@ -881,7 +881,7 @@ function PricingSection() {
           period="/yr"
           subPrice="or $9/mo"
           features={[
-            "50K premium cleanup words/mo (Haiku 4.5)",
+            "50K premium cleanup words/mo (Haiku 5.5)",
             "Sonnet, Opus, GPT-4.1 selectable",
             "Metered overage with user-set cap",
             "Auto top-up OFF by default",

@@ -19,7 +19,7 @@ export async function callProvider(args: CleanupArgs): Promise<CleanupResult> {
     case 'fast':
       return callGroqLlama(sys, args.transcript, args.env);
     case 'premium-haiku':
-      return callAnthropic('claude-haiku-4-5', sys, args.transcript, args.env);
+      return callAnthropic('claude-haiku-5-5', sys, args.transcript, args.env);
     case 'premium-sonnet':
       return callAnthropic('claude-sonnet-4-7', sys, args.transcript, args.env);
     case 'premium-opus':
