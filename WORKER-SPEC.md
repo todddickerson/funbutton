@@ -49,7 +49,7 @@
 | Secret | `STRIPE_SECRET_KEY` | Stripe live key. |
 | Secret | `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret. |
 | Secret | `GROQ_API_KEY` | Groq Whisper Turbo + Llama 3.3 70B. |
-| Secret | `ANTHROPIC_API_KEY` | Haiku 4.5 / Sonnet 4.7 / Opus 4.7. |
+| Secret | `ANTHROPIC_API_KEY` | Haiku 5.5 / Sonnet 4.7 / Opus 4.7. |
 | Secret | `OPENAI_API_KEY` | GPT-4.1 (replaces deprecating GPT-4o). |
 
 ---
@@ -199,7 +199,7 @@ App sends a `model` preference; Worker maps to provider + model + price.
 | `model` (app) | Provider | API Model | Use For | Price/10K words |
 |---|---|---|---|---|
 | `fast` | Groq | `llama-3.3-70b-versatile` | Default cleanup, free tier, fallback | $0 (included) |
-| `premium-haiku` | Anthropic | `claude-haiku-4-5` | Pro default premium | $0.40 |
+| `premium-haiku` | Anthropic | `claude-haiku-5-5` | Pro default premium | $0.40 |
 | `premium-sonnet` | Anthropic | `claude-sonnet-4-7` | Long-form, nuanced | $0.60 |
 | `premium-opus` | Anthropic | `claude-opus-4-7` | Reasoning-heavy | $0.99 |
 | `premium-gpt41` | OpenAI | `gpt-4.1` | Alternative provider | $0.50 |
