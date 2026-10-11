@@ -1414,13 +1414,42 @@ fn handle_hotkey_loop(
                     _ => wav,
                 };
 
+                // Flip to Transcribing SYNCHRONOUSLY, before the task is even
+                // spawned: a second queued Up event must never observe the
+                // stale Recording status (it would pass the gate above, fail
+                // in the stopped recorder, and flip an in-flight run to Error).
+                *state.status.lock() = Status::Transcribing;
                 let app_h = app.clone();
                 let state_h = Arc::clone(&state);
                 rt.spawn(async move {
-                    // Pipeline sets Transcribing itself, but flip it here
-                    // first so the ● → … handoff in the menu bar is instant.
-                    *state_h.status.lock() = Status::Transcribing;
                     tray::sync(&app_h);
+                    // If this task dies without reaching a terminal state
+                    // (panic anywhere below), the re-entrancy gate would
+                    // refuse every future hold — dictation bricked until
+                    // relaunch. The guard forces Error on an abnormal exit;
+                    // the normal paths set Idle/Error before it drops.
+                    struct StatusGuard(AppStateHandle, AppHandle);
+                    impl Drop for StatusGuard {
+                        fn drop(&mut self) {
+                            let stuck = matches!(
+                                *self.0.status.lock(),
+                                Status::Transcribing | Status::Cleaning | Status::Pasting
+                            );
+                            if stuck {
+                                log::error!(
+                                    "pipeline task ended abnormally mid-run — forcing Error so the hotkey gate reopens"
+                                );
+                                *self.0.status.lock() = Status::Error;
+                                tray::sync(&self.1);
+                                emit_status(
+                                    &self.1,
+                                    Status::Error,
+                                    Some("that one crashed — run it back".into()),
+                                );
+                            }
+                        }
+                    }
+                    let _status_guard = StatusGuard(Arc::clone(&state_h), app_h.clone());
                     let result = pipeline::run(Arc::clone(&state_h), wav).await;
                     if let Some(p) = app_h.get_webview_window("pill") {
                         let _ = p.hide();
