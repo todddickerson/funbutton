@@ -48,6 +48,14 @@ Ran the full gate set in the loop worktree (vendor/target/node_modules CoW-clone
 **Next:** P3 — Confucius4-R2T2 experimental opt-in STT. Research verdicts in hand: **sidecar python** (mlx-audio-swift supports Qwen3-ASR but has NO hotword input and is untested on these weights — hotwords are the point of this feature; patching+validating Swift is >1 day). License pinned: NetEase Youdao Model Use License Agreement (11,071 B, sha256 4d9321cd…, canonical raw URL in netease-youdao/Confucius4-R2T2@master) + required derivative notice text from the HF card. Proven spike venv pins: python 3.12.11, mlx-audio 0.5.5, mlx 0.32.2, transformers 5.17.0.
 **Blocked:** none.
 
+## 2026-10-11 15:05 — P4 e/f shipped: history privacy affordances (PR #22) + tray midnight rollover (PR #23)
+
+- **PR #22 `feat/history-delete`** — gauntlet [B] (raised 3×): per-row delete + a two-click-armed "wipe all now", `PRAGMA secure_delete=ON` (freed pages zeroed on every delete incl. retention purges), VACUUM after wipe-all so transcript text doesn't survive in unused sqlite pages. 2 new unit tests. Gates: 82/0/7 · clippy · desktop tsc + vite build.
+- **PR #23 `fix/tray-words-rollover`** — gauntlet [D]: tray footer showed yesterday's words count from midnight until the first dictation of the day. Display-only `words_today_for` helper (snapshot stays side-effect-free), unit-pinned. Gates: 81/0/7 · clippy.
+
+**Next:** P4g — wire the existing `validate_groq_key` command to the Settings key input (check-on-blur).
+**Blocked:** none.
+
 ## 2026-10-11 14:35 — P4d shipped: pipeline stage events (PR #21)
 
 **PR #21 `feat/pipeline-stage-events`** — gauntlet #7 [C] + the tray one-phase-lag [D]: `pipeline::run` now reports Transcribing/Cleaning through an `on_status` callback the moment they start; the hotkey loop wires it to `emit_status` + `tray::sync`. The pill's 110 ms poll is now redundant but deliberately left (removing it is a visual-QA change). Gates: 80/0/7 · clippy · fmt; live selftest regression green on the rebuilt binary.
