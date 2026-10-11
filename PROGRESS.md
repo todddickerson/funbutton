@@ -48,6 +48,15 @@ Ran the full gate set in the loop worktree (vendor/target/node_modules CoW-clone
 **Next:** P3 — Confucius4-R2T2 experimental opt-in STT. Research verdicts in hand: **sidecar python** (mlx-audio-swift supports Qwen3-ASR but has NO hotword input and is untested on these weights — hotwords are the point of this feature; patching+validating Swift is >1 day). License pinned: NetEase Youdao Model Use License Agreement (11,071 B, sha256 4d9321cd…, canonical raw URL in netease-youdao/Confucius4-R2T2@master) + required derivative notice text from the HF card. Proven spike venv pins: python 3.12.11, mlx-audio 0.5.5, mlx 0.32.2, transformers 5.17.0.
 **Blocked:** none.
 
+## 2026-10-11 13:55 — P4 a/b/c shipped: three gauntlet fixes, PRs #18 #19 #20
+
+- **PR #18 `fix/code-prompt-backslash`** — gauntlet [E]: both prompt copies (desktop CODE_PROMPT + worker) double-escaped, literally teaching `'backslash' → \\`; models emitted two backslashes. Fixed both (parity kept), regression test pins the single-char mapping + that `'newline' → \n` stays intentionally literal. Also added the missing `build_stt_prompt` test (user terms lead + outrank built-ins under the 600-char budget, truncation never splits a term). Gates: 82/0/7 · clippy · worker tsc.
+- **PR #19 `fix/settings-changed-listener`** — gauntlet [D] (raised 3×): tray mode quick-switch emits `funbutton:settings-changed` but App.tsx never listened — an open Settings window kept a stale snapshot and its next Save silently clobbered the tray's choice. One listener re-fetches settings on the event. Gates: desktop tsc + vite build.
+- **PR #20 `fix/hotkey-reentrancy-gate`** — gauntlet #8 [C/D]: a hold during an in-flight dictation overlapped recordings and the finishing run clobbered Recording status (tray/HUD lied, pill hidden mid-recording). Down now refuses unless Idle/Error (pill shows "busy — still finishing the last one"); Up without a live recording is ignored (the old too-short path was the actual status-clobber vector). `Status::accepts_new_hold` unit-pinned; live selftest regression green (normal single dictation unaffected). Hotkey tap threads untouched; crash grep unchanged.
+
+**Next:** P4d — pipeline stage events (#7): emit transcribing/cleaning from pipeline.rs via a status callback so the HUD/tray stop lying mid-run.
+**Blocked:** none.
+
 ## 2026-10-11 13:30 — P3 review pass: race + inert-hotwords fixed on PR #17
 
 Advisor review caught two real defects in the fresh R2T2 work; both fixed, re-verified live, pushed to #17 (comment on the PR):
