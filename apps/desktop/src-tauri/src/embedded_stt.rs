@@ -379,6 +379,60 @@ mod tests {
         stt.unload();
     }
 
+    /// STT bench over the checked-in fixtures (tests/fixtures/stt/*.wav) using
+    /// the exact code path the app's hotkey pipeline uses (transcribe_wav).
+    /// Loads the active-store whisper model once, then times each fixture with
+    /// and without the dev vocabulary prompt. Emits one `BENCH {json}` line per
+    /// run for scripts/bench-stt.sh to collect. Run:
+    /// `cargo test --release --lib bench_stt_fixtures -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_stt_fixtures() {
+        let mut model = crate::models::models_dir().join(BUNDLED_STT_MODEL_FILE);
+        if !model.exists() {
+            model = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("vendor/whisper")
+                .join(BUNDLED_STT_MODEL_FILE);
+        }
+        assert!(model.exists(), "no whisper model at {}", model.display());
+        let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/stt");
+        let stt = EmbeddedStt::new();
+        stt.load_from_path(&model).expect("load model");
+        // Same curated dev bias the pipeline sends in code/terminal mode.
+        let dev_prompt = crate::cleanup::DEV_DICTIONARY_STT.join(", ");
+        let mut wavs: Vec<_> = std::fs::read_dir(&fixtures)
+            .expect("fixtures dir")
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "wav"))
+            .collect();
+        wavs.sort();
+        assert!(
+            !wavs.is_empty(),
+            "no fixture wavs in {}",
+            fixtures.display()
+        );
+        for wav in wavs {
+            let bytes = std::fs::read(&wav).expect("read wav");
+            let name = wav.file_name().unwrap().to_string_lossy().to_string();
+            for (arm, prompt) in [("plain", None), ("dev-prompt", Some(dev_prompt.clone()))] {
+                let t0 = std::time::Instant::now();
+                let text = stt.transcribe_wav(&bytes, prompt).expect("transcribe");
+                let ms = t0.elapsed().as_millis();
+                println!(
+                    "BENCH {}",
+                    serde_json::json!({
+                        "engine": "whisper-base.en",
+                        "file": name,
+                        "arm": arm,
+                        "ms": ms,
+                        "text": text,
+                    })
+                );
+            }
+        }
+        stt.unload();
+    }
+
     #[test]
     fn resample_48k_halves_ish() {
         let input = vec![0.5f32; 48_000];
