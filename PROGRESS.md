@@ -48,6 +48,17 @@ Ran the full gate set in the loop worktree (vendor/target/node_modules CoW-clone
 **Next:** P3 — Confucius4-R2T2 experimental opt-in STT. Research verdicts in hand: **sidecar python** (mlx-audio-swift supports Qwen3-ASR but has NO hotword input and is untested on these weights — hotwords are the point of this feature; patching+validating Swift is >1 day). License pinned: NetEase Youdao Model Use License Agreement (11,071 B, sha256 4d9321cd…, canonical raw URL in netease-youdao/Confucius4-R2T2@master) + required derivative notice text from the HF card. Proven spike venv pins: python 3.12.11, mlx-audio 0.5.5, mlx 0.32.2, transformers 5.17.0.
 **Blocked:** none.
 
+## 2026-10-11 15:50 — P4 g/h/i: groq-key validation (PR #24), DEAD tray Terminal item found+fixed (PR #25), one-click engine restart (PR #26)
+
+- **PR #24 `feat/groq-key-validate`** — wires the orphaned `validate_groq_key` command to the Settings key input: check-on-blur, inline checking/valid/rejected states. *Stacked on #22* (same App.tsx anchors — merge #22 first).
+- **PR #25 `fix/tray-terminal-mode`** — found while reading the tray handler: **the Terminal mode quick-switch v0.1.8 shipped in the tray has been dead since release.** The handler's match pattern omitted `mode_terminal` while the inner id→mode table had it (unreachable) — clicking Terminal did nothing, silently. Fixed structurally: one `mode_for_menu_id` mapping both menu and handler consult, all six ids test-pinned. *Stacked on #23* (both touch tray.rs tests — merge #23 first).
+- **PR #26 `feat/restart-engines`** — gauntlet [B]/[D] (raised 4×): failed whisper/llama-server required relaunching the app. New `restart_engines` command (reload_stt + reload_cleanup, the proven model-switch paths) + a `restart` button in Settings → Engines. No tray item on purpose (three concurrent tray.rs edits would conflict; tray already routes failures to Settings).
+
+Cross-PR conflict pass done: #17→#15, #24→#22, #25→#23 are declared stacks with merge order in each PR; everything else is independent-hunk clean. 12 PRs open (#15–#26), all local gates green.
+
+**Next:** advisor check-in on remaining ~20h priorities (more P4 vs v0.1.9 ship-readiness vs error-message humanization).
+**Blocked:** none.
+
 ## 2026-10-11 15:05 — P4 e/f shipped: history privacy affordances (PR #22) + tray midnight rollover (PR #23)
 
 - **PR #22 `feat/history-delete`** — gauntlet [B] (raised 3×): per-row delete + a two-click-armed "wipe all now", `PRAGMA secure_delete=ON` (freed pages zeroed on every delete incl. retention purges), VACUUM after wipe-all so transcript text doesn't survive in unused sqlite pages. 2 new unit tests. Gates: 82/0/7 · clippy · desktop tsc + vite build.
