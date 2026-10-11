@@ -605,6 +605,21 @@ function App() {
               <label className="fb-label">Engines</label>
               <span className="fb-label-aux">{autoRouteLabel()}</span>
               <button className="fb-linkbtn" onClick={recheckEngines}>recheck</button>
+              <button
+                className="fb-linkbtn"
+                title="reload whisper + relaunch llama-server in place — no app restart"
+                onClick={async () => {
+                  setSttStatus("starting");
+                  setCleanupStatus("starting");
+                  try {
+                    await invoke("restart_engines");
+                    pushToast("ok", "engines restarted");
+                  } catch (e) {
+                    pushToast("warn", `restart failed: ${e}`);
+                  }
+                  recheckEngines();
+                }}
+              >restart</button>
             </div>
             <div className="fb-engines">
               <EngineRow
