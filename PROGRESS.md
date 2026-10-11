@@ -48,6 +48,17 @@ Ran the full gate set in the loop worktree (vendor/target/node_modules CoW-clone
 **Next:** P3 — Confucius4-R2T2 experimental opt-in STT. Research verdicts in hand: **sidecar python** (mlx-audio-swift supports Qwen3-ASR but has NO hotword input and is untested on these weights — hotwords are the point of this feature; patching+validating Swift is >1 day). License pinned: NetEase Youdao Model Use License Agreement (11,071 B, sha256 4d9321cd…, canonical raw URL in netease-youdao/Confucius4-R2T2@master) + required derivative notice text from the HF card. Proven spike venv pins: python 3.12.11, mlx-audio 0.5.5, mlx 0.32.2, transformers 5.17.0.
 **Blocked:** none.
 
+## 2026-10-11 19:20 — Landing micro-fixes (PR #30) · 16/16 matrix green · entering sweep-hold
+
+**PR #30 `fix/landing-microfixes`** — nav download CTA at all scroll depths, mobile table swipe hint, "claims last checked 2026-08" footnote. tsc + next build + eslint clean; NOT deployed (human-gated per the rules).
+
+**Final full matrix: all 16 branches merge onto origin/main in declared order with zero conflicts**; union = 98/0/10 Rust tests · clippy -D warnings · web next build. Declared stacks (merge base first, also under squash): #17→#15 · #21→#20 · #24→#22 · #25→#23 · #27→(#15,#17,#20,#21) · #28→(#15,#17,#18).
+
+**Backlog status:** every non-cert/screenshot/TCC-gated gauntlet item with clear user impact is now shipped or explicitly skipped-with-reason (CLI flags, launch-at-login onboarding step, pill RMS rework — need pixels or add review burden out of proportion). 16 PRs are waiting on the sweep; adding more raises Todd's review cost for thinning returns, so the loop now holds: periodic sweep checks, v0.1.9 cut per the ship block the moment merged PRs appear on main, FINAL section at the 24h mark (2026-10-12 11:58 EDT) or earlier if the ship completes.
+
+**Next:** sweep-hold (checks every ~30 min).
+**Blocked:** v0.1.9 cut on the sweep.
+
 ## 2026-10-11 18:45 — Adversarial review cycle COMPLETE: 19 findings, every confirmed bug fixed, union re-verified live
 
 Ran a blind critic over the whole 15-PR union ("assume it's broken"). It returned 19 findings — 4 merge-blockers among them — and every confirmed one is now fixed on the owning branch (commits + PR comments on #17 #19 #20 #21 #24 #27 #28):
