@@ -48,6 +48,32 @@ Ran the full gate set in the loop worktree (vendor/target/node_modules CoW-clone
 **Next:** P3 — Confucius4-R2T2 experimental opt-in STT. Research verdicts in hand: **sidecar python** (mlx-audio-swift supports Qwen3-ASR but has NO hotword input and is untested on these weights — hotwords are the point of this feature; patching+validating Swift is >1 day). License pinned: NetEase Youdao Model Use License Agreement (11,071 B, sha256 4d9321cd…, canonical raw URL in netease-youdao/Confucius4-R2T2@master) + required derivative notice text from the HF card. Proven spike venv pins: python 3.12.11, mlx-audio 0.5.5, mlx 0.32.2, transformers 5.17.0.
 **Blocked:** none.
 
+## 2026-10-11 18:15 — Deep-context STT bias shipped (PR #28) · 14-branch union green · v0.1.9 ship block pre-staged
+
+- **PR #28 `feat/stt-title-bias`** (stacked on #15→#17→#18) — the gauntlet follow-up "deep-context is not fed to the whisper STT prompt", built **evidence-first**: on dev.wav, adding the window-title token turned whisper-base's "Off-Middleware RSS" into "auth-middleware.rs" (plus ClickFunnels + kubectl correct). Order user-dict > title tokens > dev built-ins, case-insensitive dedupe, ≤150 ms bounded context wait only when capture is on, title tokens never reach cloud STT prompts without the `context_to_cloud` opt-in. Shared `title_tokens` tokenizer with the R2T2 hotword builder. `FUNBUTTON_TEST_PROMPT` env for one-command prompt A/Bs.
+- **Merge matrix (all 14 branches)**: zero conflicts, union = 98/0/10 tests · clippy · fmt green.
+
+### v0.1.9 SHIP BLOCK (ready to run once the sweep merges — do NOT run before)
+```
+# 0. preflight
+git fetch origin && git log --oneline v0.1.8..origin/main   # release notes come from THIS, not from PRs
+gh pr list --state open                                      # anything still open stays out of the notes
+# 1. version bump (Cargo.toml + tauri.conf.json + Cargo.lock) on a ship branch off origin/main
+# 2. gates (full set incl. keyless offline STT + selftest binary run)
+# 3. cargo tauri build --bundles app  → DMG via the Sequoia workaround:
+#    ditto FunButton.app staging/ && ln -s /Applications staging/Applications && hdiutil create -format UDZO
+#    (bundle_dmg.sh is broken on Sequoia — do not use)
+# 4. gh release create v0.1.9 <dmg> --title ... --notes "<from git log>"
+# 5. scripts/update-cask.sh            # tap version+sha — DO NOT SKIP (stale cask breaks brew install)
+# 6. scripts/update-landing-version.sh # Todd runs the deploy half: landing deploy is HUMAN-GATED this run —
+#    exact command for Todd: cd apps/web && vercel --prod --yes  (with the funbutton-project token)
+# NOTE: if #17 (R2T2/manifest-v2) is NOT merged, v0.1.9 has no R2T2 and the manifest stays v1 — notes must not claim it.
+# NOTE: if #17 IS merged, notes must say older builds keep their baked model list (schema gate, by design).
+```
+
+**Next:** dictionary import/export (last planned P4 item), then hold for the sweep; periodic `gh pr list` checks.
+**Blocked:** v0.1.9 cut is blocked on the sweep merging PRs (none merged yet).
+
 ## 2026-10-11 17:00 — Close-out capture done · humanized errors shipped (PR #27) · full 13-branch merge matrix GREEN
 
 - **PR #27 `feat/humanize-errors`** — the most-cited unfixed gauntlet finding (6+ raises): pipeline errors rendered raw anyhow chains in the pill's 11px line. Known failure roots now map to short actionable copy ("didn't hear anything — hold and speak", "no speech engine ready — open Settings → Models", "key rejected…", "network hiccup…", "speech engine hiccuped — try again, or restart engines in Settings" ← pairs with #26); unknown failures bounded to ≤90 chars. Full chain still logged. Stacked on #15+#17+#20+#21 (merge order in PR).
