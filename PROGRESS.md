@@ -48,6 +48,19 @@ Ran the full gate set in the loop worktree (vendor/target/node_modules CoW-clone
 **Next:** P3 — Confucius4-R2T2 experimental opt-in STT. Research verdicts in hand: **sidecar python** (mlx-audio-swift supports Qwen3-ASR but has NO hotword input and is untested on these weights — hotwords are the point of this feature; patching+validating Swift is >1 day). License pinned: NetEase Youdao Model Use License Agreement (11,071 B, sha256 4d9321cd…, canonical raw URL in netease-youdao/Confucius4-R2T2@master) + required derivative notice text from the HF card. Proven spike venv pins: python 3.12.11, mlx-audio 0.5.5, mlx 0.32.2, transformers 5.17.0.
 **Blocked:** none.
 
+## 2026-10-11 13:05 — P3 DONE: Confucius4-R2T2 experimental STT shipped (PR #17), fully QA'd live
+
+**PR #17 (`feat/r2t2-experimental-stt`, stacked on #15 — merge #15 first):** the model picker gains "Experimental — R2T2 (hotword-aware)" (1.5 GB). Manifest schema v2 (multi-file entries + runtime field; old apps safely reject the v2 live manifest via the existing schema gate). Self-contained runtime under App Support (pinned uv 0.13.0 → uv-managed CPython 3.12 only-managed → spike-proven pinned wheels; 466 MB, cache cleaned). Sidecar lifecycle clones the llama-server pattern (PID registry + SPAWN_GATE + shutdown reap). Pipeline: R2T2 leads only when picked AND up; whisper stays warm as fallback. Hotwords = user dictionary + AX window-title tokens, capped 24, never logged. NetEase license downloaded beside the weights at a pinned sha; §4.1(a) derivative notice written at install.
+
+**All 15 QA checks PASS live on this machine** (RUNTIME-QA-r2t2.md): 1.6 GB production-path download into the real store (29.6 s, per-file SHA); cold in-app provisioning ~7 s on this pipe; `transcribed via r2t2` through the real hotkey code path from the bundled .app (sidecar warm-ready 1.7 s); honest whisper fallback when the model is missing; AppleEvent-quit teardown reaps sidecar + llama with 0 new .ips; hotword effect live ("cube control get pods" → "kubectl get pods"). Gates: 85/0/9 · fmt · clippy -D warnings · crash grep (comments only) · worker tsc.
+
+**Two gotchas worth keeping** (also going to CLAUDE.md at close-out): (1) `cargo test`/`clippy` do NOT rebuild `target/release/funbutton` — a stale binary silently QA's old code; always `cargo build --release` before launching. (2) AppleEvent quit silently no-ops (rc 0!) on a bare dev binary — it isn't LaunchServices-registered; teardown QA must run against the bundled .app. (3) R2T2 decodes greedy but hotword ORDER changes output — pin proven order in tests.
+
+**Settings restored** (whisper-base.en default again); model + runtime left installed so Todd can flip it on in Settings → Models.
+
+**Next:** P4 — gauntlet leftovers by user impact (non-cert/screenshot/TCC-gated).
+**Blocked:** none.
+
 ## 2026-10-11 12:40 — P3 part 1: STT bench harness shipped (PR #16) + R2T2 fully de-risked
 
 **PR #16 (`feat/stt-bench-fixtures`):** the 4 spike wavs checked in as fixtures (833 KB), an ignored `bench_stt_fixtures` test timing whisper-base through the app's exact `transcribe_wav` path (plain + dev-prompt arms), and `scripts/bench-stt.{sh,py}` printing a whisper-vs-R2T2 comparison table (R2T2 leg skips loudly when absent). Real run on this machine: R2T2+hotwords nails `kubectl`/`auth middleware.rs`/`ClickFunnels` where whisper-base garbles them ("Wethook in Off-Middleware RSS"); whisper is ~3× faster (25–90 ms vs 170–280 ms) — both well under real-time. Gates: 80/0/8, fmt, clippy all green.
