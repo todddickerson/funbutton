@@ -86,12 +86,36 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
     // offline); Groq/cloud is the optional faster path. Whatever the user
     // picked, the other engines remain silent fallbacks so dictation
     // degrades instead of hard-failing.
-    let stt_prompt = build_stt_prompt(&dictionary, mode);
+    //
+    // Deep-context STT bias: tokens from the focused window title feed
+    // whisper's initial prompt so on-screen identifiers are HEARD right, not
+    // just respelled at cleanup (measured on the fixtures: a title token
+    // turned "Off-Middleware RSS" into "auth-middleware.rs"). The AX read
+    // lands ms after the app name, so give it a short bounded wait — only
+    // when capture is on; capture-off returns instantly (channel closed).
+    // The result is cached for the cleanup-time read below.
+    let title_ctx = if capture_context {
+        detect.wait_context_up_to(std::time::Duration::from_millis(150))
+    } else {
+        None
+    };
+    let stt_title_tokens: Vec<String> = title_ctx
+        .as_ref()
+        .and_then(|f| f.window_title.as_deref())
+        .map(title_tokens)
+        .unwrap_or_default();
+    // PRIVACY: screen context rides the LOCAL whisper prompt always, but
+    // reaches a cloud STT prompt (worker header / Groq BYOK) only with the
+    // explicit context_to_cloud opt-in — same contract as cleanup context.
+    let stt_prompt = build_stt_prompt(&dictionary, mode, &stt_title_tokens);
+    let stt_prompt_cloud = if context_to_cloud {
+        stt_prompt.clone()
+    } else {
+        build_stt_prompt(&dictionary, mode, &[])
+    };
     // Experimental R2T2 sidecar: participates only when the user picked the
     // R2T2 model in Settings → Models AND its sidecar is up. Hotwords = user
-    // dictionary + focused-window title tokens — whatever AX context has
-    // arrived by now (non-blocking; context_now caches, so the cleanup-time
-    // read below still works). Never logged, never persisted.
+    // dictionary + focused-window title tokens. Never logged, never persisted.
     let r2t2_srv = {
         let active_is_r2t2 = {
             let m = state.manifest.lock();
@@ -106,13 +130,10 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
         }
     };
     let hotwords = if r2t2_srv.is_some() {
-        // The AX title read lands milliseconds after the app name, so a
-        // non-blocking read here would miss it nearly every time. Give it a
-        // short bounded wait — only on the R2T2 + capture-on path, so no
-        // other dictation pays it. Capture-off returns instantly (channel
-        // already closed). The result is cached for the cleanup-time read.
+        // Reuses the context waited on above (cached); a second bounded wait
+        // only runs when capture is on and nothing has arrived yet.
         let ctx = if capture_context {
-            detect.wait_context_up_to(std::time::Duration::from_millis(250))
+            detect.wait_context_up_to(std::time::Duration::from_millis(100))
         } else {
             None
         };
@@ -169,7 +190,8 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
             SttSource::Cloud => match &cloud {
                 Some(cli) => (
                     "cloud",
-                    cli.transcribe(wav.clone(), stt_prompt.as_deref()).await,
+                    cli.transcribe(wav.clone(), stt_prompt_cloud.as_deref())
+                        .await,
                 ),
                 None => continue,
             },
@@ -179,7 +201,7 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
                 }
                 (
                     "groq-byok",
-                    groq::transcribe(&api_key, wav.clone(), stt_prompt.as_deref()).await,
+                    groq::transcribe(&api_key, wav.clone(), stt_prompt_cloud.as_deref()).await,
                 )
             }
         };
@@ -451,16 +473,20 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
     })
 }
 
-/// Vocabulary bias for the on-device whisper: the user's dictionary, plus
-/// (in code/terminal mode) the curated STT-facing dev vocabulary. whisper's
-/// initial prompt is capped (~224 tokens), so trim to a safe budget — user
-/// terms load first and outrank the built-ins if space runs out.
-fn build_stt_prompt(dictionary: &[String], mode: Mode) -> Option<String> {
+/// Vocabulary bias for the on-device whisper: the user's dictionary first
+/// (always outranks), then focused-window title tokens (deep context — so
+/// on-screen identifiers are HEARD right, not just respelled at cleanup),
+/// then (in code/terminal mode) the curated STT-facing dev vocabulary.
+/// whisper's initial prompt is capped (~224 tokens), so trim to a safe
+/// budget; truncation never splits a term and case-insensitive duplicates
+/// never waste budget.
+fn build_stt_prompt(dictionary: &[String], mode: Mode, title_tokens: &[String]) -> Option<String> {
     let mut terms: Vec<&str> = dictionary
         .iter()
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .collect();
+    terms.extend(title_tokens.iter().map(|s| s.as_str()));
     if mode.is_dev() {
         terms.extend(cleanup::DEV_DICTIONARY_STT.iter().copied());
     }
@@ -468,7 +494,12 @@ fn build_stt_prompt(dictionary: &[String], mode: Mode) -> Option<String> {
         return None;
     }
     let mut prompt = String::with_capacity(600);
+    let mut seen: Vec<String> = Vec::new();
     for t in terms {
+        let key = t.to_lowercase();
+        if seen.contains(&key) {
+            continue;
+        }
         if prompt.len() + t.len() + 2 > 600 {
             break;
         }
@@ -476,6 +507,7 @@ fn build_stt_prompt(dictionary: &[String], mode: Mode) -> Option<String> {
             prompt.push_str(", ");
         }
         prompt.push_str(t);
+        seen.push(key);
     }
     Some(prompt)
 }
@@ -506,35 +538,51 @@ fn build_hotwords(
     }
     if let Some(f) = focus {
         if let Some(title) = &f.window_title {
-            for tok in title.split(|c: char| {
-                c.is_whitespace()
-                    || matches!(
-                        c,
-                        '—' | '–'
-                            | '|'
-                            | '·'
-                            | ':'
-                            | ','
-                            | ';'
-                            | '('
-                            | ')'
-                            | '['
-                            | ']'
-                            | '{'
-                            | '}'
-                            | '<'
-                            | '>'
-                            | '"'
-                            | '\''
-                    )
-            }) {
-                let t = tok.trim_matches(|c: char| !(c.is_alphanumeric() || "._-/".contains(c)));
-                // Identifier-ish only: ≥3 chars with at least one letter —
-                // skips noise like "1", "—", "to".len()==2 etc.
-                if t.len() >= 3 && t.chars().any(|c| c.is_alphabetic()) {
-                    push(&mut out, t);
-                }
+            for t in title_tokens(title) {
+                push(&mut out, &t);
             }
+        }
+    }
+    out
+}
+
+/// Identifier-ish tokens from a window title — shared by the R2T2 hotword
+/// list and the whisper initial-prompt bias. ≥3 chars with at least one
+/// letter (skips noise like "1", "—", "to"); separators cover the em/en-dash
+/// and bracket conventions window titles actually use. Deduped and capped so
+/// a pathological title can't flood a prompt budget.
+fn title_tokens(title: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tok in title.split(|c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '—' | '–'
+                    | '|'
+                    | '·'
+                    | ':'
+                    | ','
+                    | ';'
+                    | '('
+                    | ')'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | '<'
+                    | '>'
+                    | '"'
+                    | '\''
+            )
+    }) {
+        let t = tok.trim_matches(|c: char| !(c.is_alphanumeric() || "._-/".contains(c)));
+        if t.len() >= 3
+            && t.len() <= 48
+            && t.chars().any(|c| c.is_alphabetic())
+            && !out.iter().any(|x| x.eq_ignore_ascii_case(t))
+            && out.len() < 16
+        {
+            out.push(t.to_string());
         }
     }
     out
@@ -678,7 +726,7 @@ mod tests {
     fn stt_prompt_user_terms_lead_and_truncation_is_term_safe() {
         // User terms lead, built-ins follow (dev mode pulls the curated list).
         let dict = vec!["ClickFunnels".to_string(), "Etison".to_string()];
-        let p = super::build_stt_prompt(&dict, Mode::Code).unwrap();
+        let p = super::build_stt_prompt(&dict, Mode::Code, &[]).unwrap();
         assert!(
             p.starts_with("ClickFunnels, Etison"),
             "user terms must lead: {p}"
@@ -690,16 +738,16 @@ mod tests {
         assert!(p.len() <= 600, "budget: {} chars", p.len());
 
         // Non-dev mode: user dictionary only, no built-ins.
-        let p = super::build_stt_prompt(&dict, Mode::Email).unwrap();
+        let p = super::build_stt_prompt(&dict, Mode::Email, &[]).unwrap();
         assert_eq!(p, "ClickFunnels, Etison");
 
         // Empty input → None (no prompt at all, not an empty string).
-        assert!(super::build_stt_prompt(&[], Mode::Email).is_none());
+        assert!(super::build_stt_prompt(&[], Mode::Email, &[]).is_none());
 
         // An oversized user dictionary crowds the built-ins out entirely —
         // user terms outrank — and truncation keeps whole terms only.
         let big: Vec<String> = (0..200).map(|i| format!("useropolis{i:03}")).collect();
-        let p = super::build_stt_prompt(&big, Mode::Code).unwrap();
+        let p = super::build_stt_prompt(&big, Mode::Code, &[]).unwrap();
         assert!(p.len() <= 600);
         assert!(p.starts_with("useropolis000"));
         assert!(
@@ -709,5 +757,41 @@ mod tests {
         for t in p.split(", ") {
             assert!(big.iter().any(|b| b == t), "truncation split a term: {t:?}");
         }
+    }
+
+    /// Deep-context STT bias: window-title tokens sit between the user
+    /// dictionary (which outranks them) and the dev built-ins, and
+    /// case-insensitive duplicates never waste the 600-char budget.
+    #[test]
+    fn stt_prompt_title_tokens_rank_after_user_dict_and_dedupe() {
+        let dict = vec!["ClickFunnels".to_string()];
+        let title = vec![
+            "auth_middleware.rs".to_string(),
+            "clickfunnels".to_string(), // dup of a user term, different case
+        ];
+        let p = super::build_stt_prompt(&dict, Mode::Code, &title).unwrap();
+        assert!(
+            p.starts_with("ClickFunnels, auth_middleware.rs"),
+            "user dict leads, then title tokens: {p}"
+        );
+        // The duplicate never repeats (user casing wins).
+        assert_eq!(p.to_lowercase().matches("clickfunnels").count(), 1, "{p}");
+        // Dev built-ins still follow in dev mode.
+        assert!(p.contains(cleanup::DEV_DICTIONARY_STT[0]), "{p}");
+        assert!(p.len() <= 600);
+
+        // Non-dev mode: user dict + title tokens only.
+        let p = super::build_stt_prompt(&dict, Mode::Email, &title).unwrap();
+        assert_eq!(p, "ClickFunnels, auth_middleware.rs");
+
+        // Title tokenizer: identifier-ish only, deduped, capped at 16.
+        let toks =
+            super::title_tokens("auth_middleware.rs — funbutton | AUTH_MIDDLEWARE.RS (3) to");
+        assert_eq!(toks, vec!["auth_middleware.rs", "funbutton"]);
+        let flood = (0..100)
+            .map(|i| format!("tok{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(super::title_tokens(&flood).len() <= 16);
     }
 }
