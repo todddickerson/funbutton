@@ -2,6 +2,23 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-10-11 11:58 — 24h loop STARTED (branch `loop-24h-oct11`)
+
+**Start time: 2026-10-11 11:58 EDT. Hard stop: 2026-10-12 11:58 EDT.**
+
+Plan (per `.loop-prompt.txt` priority order):
+1. Regression pass on main-as-is (cargo gates, worker tsc, real-wav pipeline proof).
+2. DMG-upgrade model migration — prove it with a test or document why it's already fine.
+3. Confucius4-R2T2 as experimental opt-in STT (sidecar MLX runtime, hotwords, NetEase license shipped with weights).
+4. Gauntlet leftovers by user impact.
+5. v0.1.9 if time remains.
+
+Branch mechanics: PROGRESS.md/CLAUDE.md updates stay on `loop-24h-oct11` only (the heartbeat); each theme gets its own `feat/*` branch cut from origin/main so PRs stay small and independent.
+
+**Done:** oriented (CLAUDE.md, PROGRESS.md, GAUNTLET-FINDINGS.md, RUNTIME-QA-v0.1.8.md, SIGNING.md, models_manifest.json, pipeline/models/cloud/embedded_stt sources, R2T2 spike results).
+**Next:** CoW-clone vendor/target/node_modules from main checkout, run the full regression gate set.
+**Blocked:** none.
+
 ## 2026-09-15 09:52 — Cloud dev-vocab parity: premium path stops being worse than free (branch `feat-cloud-dev-vocab-parity`, PR open)
 
 **Fixes GAUNTLET finding [E]: the premium cloud path delivered a *weaker* dev experience than free offline.** Two gaps closed — the worker's cleanup `CODE_PROMPT` had no `DEV_DICTIONARY`, and the cloud STT call (`cloud.rs::transcribe`) sent no vocabulary-bias prompt. So a paying user's "git/kubectl/pnpm/Groq" transcribed and cleaned *worse* than a free on-device user's. Now both cloud legs get the same dev bias as the on-device/BYOK paths.
