@@ -201,3 +201,29 @@ handling; fmt + clippy `-D warnings` rc 0.
   ~3 s; uv retries internally, and a provisioning failure surfaces as the
   engine-board "failed" state via `r2t2_error` — not silently).
 - Streaming partials (stretch goal, intentionally not started).
+
+## Adversarial-review pass 2 (2026-10-11 evening — blind critic over the full PR union)
+
+Confirmed bugs found and fixed on this branch (each verified before/after):
+
+- **Unretryable provisioning**: `uv venv` exits 2 on an existing venv — one
+  failed first setup bricked all retries. Reproduced against the pinned
+  uv 0.13.0; fixed with `--clear` (second-run-with-`--clear` proven live).
+- **uv orphan on quit**: uv children now register in the same PID reap
+  registry as the sidecar (under the spawn gate, honoring the shutdown
+  latch) — quit mid-provision reaps the installer.
+- **Delete-active-model kept dictating on it**: `models_delete` unloaded
+  whisper (the fallback) and left the sidecar serving deleted weights; now
+  it reloads engines and also reclaims the ~480 MB runtime dir.
+- **Dead sidecar unrecoverable**: `reload_stt` restarts the sidecar instead
+  of reusing a possibly-dead handle (restart-engines / model switch is now
+  the recovery path); the startup health poll fails fast when the child
+  already exited (was: "starting" for the full 240 s).
+- **Bounced-pick dropped**: `r2t2_starting` rides a Drop guard (panic-safe)
+  and re-syncs once when a re-pick bounced off the in-flight flag; retries
+  are gated on "no recorded error" so failures never hot-loop.
+- **Privacy**: sidecar error bodies containing hotword content are redacted
+  before logging; tray STT line now names r2t2 vs whisper truthfully.
+
+Post-fix: suite 88/0/9 · live sidecar hotword test green · full-union
+release-binary selftest green on both engine paths (whisper + r2t2).
