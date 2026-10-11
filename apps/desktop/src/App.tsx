@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { AlertTriangle, ChevronRight } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight } from "lucide-react";
 import "./App.css";
 import { HotkeyPicker } from "./HotkeyPicker";
 import { hotkeyHold, hotkeyName, hotkeyShort, type HotkeyKind } from "./hotkeys";
@@ -134,6 +134,7 @@ function App() {
   const [lastFailed, setLastFailed] = useState<HistoryEntry | null>(null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [wipeArmed, setWipeArmed] = useState(false);
+  const [groqKeyCheck, setGroqKeyCheck] = useState<null | "checking" | "ok" | "bad">(null);
   // License state
   const [licenseInfo, setLicenseInfo] = useState<LicenseInfo | null>(null);
   const [licenseDraftJwt, setLicenseDraftJwt] = useState<string>("");
@@ -399,6 +400,24 @@ function App() {
     if (tab === "license") refreshLicense();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, settings?.license_jwt]);
+
+  // Inline key validation on blur (gauntlet [B]: the engine row said "key
+  // set" without ever checking it — a typo'd key surfaced only as the first
+  // failed dictation).
+  async function validateGroqKeyNow(key: string) {
+    const k = key.trim();
+    if (!k) {
+      setGroqKeyCheck(null);
+      return;
+    }
+    setGroqKeyCheck("checking");
+    try {
+      const ok = await invoke<boolean>("validate_groq_key", { key: k });
+      setGroqKeyCheck(ok ? "ok" : "bad");
+    } catch {
+      setGroqKeyCheck("bad");
+    }
+  }
 
   async function copyEntry(id: number) {
     try {
@@ -696,10 +715,29 @@ function App() {
                 className="fb-input"
                 type="password"
                 value={settings.groq_api_key}
-                onChange={(e) => update("groq_api_key", e.target.value)}
-                onBlur={saveDrafts}
+                onChange={(e) => {
+                  update("groq_api_key", e.target.value);
+                  setGroqKeyCheck(null);
+                }}
+                onBlur={(e) => {
+                  saveDrafts();
+                  validateGroqKeyNow(e.target.value);
+                }}
                 placeholder="gsk_… (optional — everything works without it)"
               />
+              {groqKeyCheck && (
+                <span className={`fb-keycheck ${groqKeyCheck}`}>
+                  {groqKeyCheck === "checking" ? (
+                    "checking…"
+                  ) : groqKeyCheck === "ok" ? (
+                    <>
+                      <Check size={11} /> key valid
+                    </>
+                  ) : (
+                    "key rejected — double-check it"
+                  )}
+                </span>
+              )}
             </div>
             <div className="fb-fieldrow">
               <span className="fb-selname">ollama model</span>

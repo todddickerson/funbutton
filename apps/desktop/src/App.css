@@ -963,3 +963,9 @@ kbd {
   background: linear-gradient(90deg, var(--accent-ink), var(--accent));
   transition: width 0.3s ease;
 }
+
+/* inline groq-key validation result (check-on-blur) */
+.fb-keycheck { font-size: 11px; white-space: nowrap; display: inline-flex; align-items: center; gap: 3px; }
+.fb-keycheck.checking { color: var(--dim); }
+.fb-keycheck.ok { color: var(--ok); }
+.fb-keycheck.bad { color: var(--bad); }
