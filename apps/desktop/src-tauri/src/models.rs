@@ -768,4 +768,82 @@ mod tests {
         let base = m.active_entry(Role::Stt, "whisper-base.en").unwrap();
         assert_eq!(base.id, "whisper-base.en");
     }
+
+    /// The models store must survive a DMG upgrade (dragging a new .app over
+    /// the old one). That holds only while the store path is derived from
+    /// HOME + APP_IDENTIFIER and never from the executable/bundle location —
+    /// this pins it. Also pins that APP_IDENTIFIER matches tauri.conf.json:
+    /// renaming the bundle identifier would silently orphan every user's
+    /// downloaded models (a fresh store path ⇒ full re-download).
+    #[test]
+    fn store_is_bundle_independent_so_dmg_upgrades_keep_models() {
+        // APP_IDENTIFIER == tauri.conf.json "identifier".
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(
+            conf["identifier"].as_str().unwrap(),
+            APP_IDENTIFIER,
+            "bundle identifier drifted from models::APP_IDENTIFIER — this would orphan installed models"
+        );
+
+        // Default store path: HOME-scoped, bundle/exe-independent. (Guard the
+        // env reads/writes: FUNBUTTON_MODELS_DIR is process-global and this is
+        // the only non-ignored test that touches it.)
+        let saved = std::env::var("FUNBUTTON_MODELS_DIR").ok();
+        std::env::remove_var("FUNBUTTON_MODELS_DIR");
+        let dir = models_dir();
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(
+            dir,
+            PathBuf::from(&home)
+                .join("Library")
+                .join("Application Support")
+                .join(APP_IDENTIFIER)
+                .join("models"),
+            "models_dir must be exactly the HOME-scoped App Support store"
+        );
+        let exe = std::env::current_exe().unwrap();
+        assert!(
+            !dir.starts_with(exe.parent().unwrap()),
+            "models_dir must never live under the executable/bundle"
+        );
+
+        // A model counts as installed purely by store contents (exists + exact
+        // size — the cheap startup check), regardless of where the .app is.
+        // So replacing the .app cannot invalidate an installed model.
+        let tmp = std::env::temp_dir().join(format!("fb-dmg-proof-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::env::set_var("FUNBUTTON_MODELS_DIR", &tmp);
+        let entry = ModelEntry {
+            id: "proof".into(),
+            role: Role::Cleanup,
+            name: "proof".into(),
+            filename: "proof.gguf".into(),
+            url: "https://example.invalid/proof.gguf".into(),
+            sha256: "0".repeat(64),
+            size_bytes: 8,
+            blurb: String::new(),
+            license: String::new(),
+            default: false,
+            recommended: false,
+            min_app_version: "0.0.0".into(),
+        };
+        assert!(!is_installed(&entry), "empty store → not installed");
+        std::fs::write(tmp.join("proof.gguf"), b"12345678").unwrap();
+        assert!(
+            is_installed(&entry),
+            "exact-size file in the store → installed, no bundle involved"
+        );
+        // Wrong size (truncated/corrupt) must read as NOT installed, so the
+        // download flow takes over rather than loading a bad file.
+        std::fs::write(tmp.join("proof.gguf"), b"1234").unwrap();
+        assert!(!is_installed(&entry), "size mismatch → not installed");
+
+        // Restore process env + scratch dir.
+        match saved {
+            Some(v) => std::env::set_var("FUNBUTTON_MODELS_DIR", v),
+            None => std::env::remove_var("FUNBUTTON_MODELS_DIR"),
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }
