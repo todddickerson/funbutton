@@ -37,6 +37,17 @@ Ran the full gate set in the loop worktree (vendor/target/node_modules CoW-clone
 **Next:** P2 — DMG-upgrade model migration: pin the invariants with unit tests, document the proof.
 **Blocked:** none.
 
+## 2026-10-11 12:25 — P2 DONE: DMG-upgrade model migration is already correct — proof pinned, PR #15 open
+
+**Verdict: no bug.** Dragging a new .app over the old one keeps the model store: `models_dir()` is HOME-scoped (never bundle/exe-scoped), startup engine init is a size-check only (no SHA re-hash, no unconditional download), `migrate_from_bundle` no-ops on installed models, and `~/.funbutton/settings.json` keeps `onboarded` so the wizard doesn't re-run. Empirical: v0.1.8 QA's literal /Applications swap + today's worktree-path launch both show zero download activity with the store intact.
+
+**Shipped (branch `test/dmg-upgrade-model-proof`, PR #15):** unit test pinning APP_IDENTIFIER == tauri.conf.json identifier (drift would orphan every user's store), exe-independence of `models_dir()`, and `is_installed` size semantics; `RUNTIME-QA-dmg-upgrade-models.md` with the full proof chain + the release-discipline rule (never mutate filename/size/sha of an existing manifest id — add a new id).
+
+**Gates:** `cargo test --release --lib` 81/0/7 · fmt rc 0 · clippy -D warnings rc 0.
+
+**Next:** P3 — Confucius4-R2T2 experimental opt-in STT. Research verdicts in hand: **sidecar python** (mlx-audio-swift supports Qwen3-ASR but has NO hotword input and is untested on these weights — hotwords are the point of this feature; patching+validating Swift is >1 day). License pinned: NetEase Youdao Model Use License Agreement (11,071 B, sha256 4d9321cd…, canonical raw URL in netease-youdao/Confucius4-R2T2@master) + required derivative notice text from the HF card. Proven spike venv pins: python 3.12.11, mlx-audio 0.5.5, mlx 0.32.2, transformers 5.17.0.
+**Blocked:** none.
+
 ## 2026-09-15 09:52 — Cloud dev-vocab parity: premium path stops being worse than free (branch `feat-cloud-dev-vocab-parity`, PR open)
 
 **Fixes GAUNTLET finding [E]: the premium cloud path delivered a *weaker* dev experience than free offline.** Two gaps closed — the worker's cleanup `CODE_PROMPT` had no `DEV_DICTIONARY`, and the cloud STT call (`cloud.rs::transcribe`) sent no vocabulary-bias prompt. So a paying user's "git/kubectl/pnpm/Groq" transcribed and cleaned *worse* than a free on-device user's. Now both cloud legs get the same dev bias as the on-device/BYOK paths.
