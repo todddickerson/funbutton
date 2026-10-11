@@ -48,6 +48,15 @@ Ran the full gate set in the loop worktree (vendor/target/node_modules CoW-clone
 **Next:** P3 — Confucius4-R2T2 experimental opt-in STT. Research verdicts in hand: **sidecar python** (mlx-audio-swift supports Qwen3-ASR but has NO hotword input and is untested on these weights — hotwords are the point of this feature; patching+validating Swift is >1 day). License pinned: NetEase Youdao Model Use License Agreement (11,071 B, sha256 4d9321cd…, canonical raw URL in netease-youdao/Confucius4-R2T2@master) + required derivative notice text from the HF card. Proven spike venv pins: python 3.12.11, mlx-audio 0.5.5, mlx 0.32.2, transformers 5.17.0.
 **Blocked:** none.
 
+## 2026-10-11 12:40 — P3 part 1: STT bench harness shipped (PR #16) + R2T2 fully de-risked
+
+**PR #16 (`feat/stt-bench-fixtures`):** the 4 spike wavs checked in as fixtures (833 KB), an ignored `bench_stt_fixtures` test timing whisper-base through the app's exact `transcribe_wav` path (plain + dev-prompt arms), and `scripts/bench-stt.{sh,py}` printing a whisper-vs-R2T2 comparison table (R2T2 leg skips loudly when absent). Real run on this machine: R2T2+hotwords nails `kubectl`/`auth middleware.rs`/`ClickFunnels` where whisper-base garbles them ("Wethook in Off-Middleware RSS"); whisper is ~3× faster (25–90 ms vs 170–280 ms) — both well under real-time. Gates: 80/0/8, fmt, clippy all green.
+
+**De-risk proven before building:** `load_model("/local/dir")` works **offline** (HF_HUB_OFFLINE=1) from a plain directory with exactly the 12 files I'll pin in the manifest — loads in 1.7 s warm, hotwords work. All 13 sha256s (12 model files + NetEase license) double-verified (HF API oid/etag vs local shasum).
+
+**Next:** the main R2T2 PR — manifest schema v2 (multi-file models + runtime field; old apps safely reject v2 live manifests and keep their baked copy), uv-provisioned python runtime under App Support, sidecar server (llama-server lifecycle pattern: PID registry + SPAWN_GATE + shutdown reap), pipeline SttSource::R2t2 with dictionary+window-title hotwords (never logged), picker entry.
+**Blocked:** none.
+
 ## 2026-09-15 09:52 — Cloud dev-vocab parity: premium path stops being worse than free (branch `feat-cloud-dev-vocab-parity`, PR open)
 
 **Fixes GAUNTLET finding [E]: the premium cloud path delivered a *weaker* dev experience than free offline.** Two gaps closed — the worker's cleanup `CODE_PROMPT` had no `DEV_DICTIONARY`, and the cloud STT call (`cloud.rs::transcribe`) sent no vocabulary-bias prompt. So a paying user's "git/kubectl/pnpm/Groq" transcribed and cleaned *worse* than a free on-device user's. Now both cloud legs get the same dev bias as the on-device/BYOK paths.
