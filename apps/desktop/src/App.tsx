@@ -254,12 +254,16 @@ function App() {
       setSttStatus("failed");
       console.warn("embedded STT failed:", e.payload);
     });
-    // Tray quick-switches (mode etc.) persist settings behind this window's
+    // Tray quick-switches (mode) persist settings behind this window's
     // back. Without re-fetching, an open Settings window keeps the stale
     // snapshot and its next Save silently clobbers the tray's choice
-    // (save_settings replaces the whole Settings struct).
+    // (save_settings replaces the whole Settings struct). Merge ONLY the
+    // field the tray changes — replacing the whole object would wipe text
+    // a user is mid-typing in the key/dictionary inputs.
     const unSC = listen("funbutton:settings-changed", () => {
-      invoke<Settings>("get_settings").then(setSettings);
+      invoke<Settings>("get_settings").then((fresh) => {
+        setSettings((prev) => (prev ? { ...prev, mode_override: fresh.mode_override } : fresh));
+      });
     });
     const unL = listen("funbutton:license-activated", () => {
       invoke<Settings>("get_settings").then((s) => {
