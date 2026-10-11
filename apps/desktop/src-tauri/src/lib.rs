@@ -1528,7 +1528,7 @@ fn handle_hotkey_loop(
     }
 }
 
-fn chrono_today() -> String {
+pub(crate) fn chrono_today() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
