@@ -1661,7 +1661,16 @@ fn handle_hotkey_loop(
                         }
                     }
                     let _status_guard = StatusGuard(Arc::clone(&state_h), app_h.clone());
-                    let result = pipeline::run(Arc::clone(&state_h), wav).await;
+                    // Mid-pipeline stage reporter (gauntlet #7): pipeline.rs
+                    // flips AppState.status internally but nothing used to
+                    // tell the HUD or the open tray menu — the pill inferred
+                    // stages off a 110ms poll and the menu lagged one phase.
+                    let app_status = app_h.clone();
+                    let on_status = move |st: Status| {
+                        emit_status(&app_status, st, None);
+                        tray::sync(&app_status);
+                    };
+                    let result = pipeline::run(Arc::clone(&state_h), wav, &on_status).await;
                     if let Some(p) = app_h.get_webview_window("pill") {
                         let _ = p.hide();
                     }
