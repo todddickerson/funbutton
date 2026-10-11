@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { AlertTriangle, Check, ChevronRight } from "lucide-react";
@@ -134,7 +134,8 @@ function App() {
   const [lastFailed, setLastFailed] = useState<HistoryEntry | null>(null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [wipeArmed, setWipeArmed] = useState(false);
-  const [groqKeyCheck, setGroqKeyCheck] = useState<null | "checking" | "ok" | "bad">(null);
+  const [groqKeyCheck, setGroqKeyCheck] = useState<null | "checking" | "ok" | "bad" | "unreachable">(null);
+  const groqCheckSeq = useRef(0);
   // License state
   const [licenseInfo, setLicenseInfo] = useState<LicenseInfo | null>(null);
   const [licenseDraftJwt, setLicenseDraftJwt] = useState<string>("");
@@ -406,6 +407,9 @@ function App() {
   // failed dictation).
   async function validateGroqKeyNow(key: string) {
     const k = key.trim();
+    // Sequence guard: a slow response for an old key must never label the
+    // key the user has since typed (review finding).
+    const seq = ++groqCheckSeq.current;
     if (!k) {
       setGroqKeyCheck(null);
       return;
@@ -413,9 +417,13 @@ function App() {
     setGroqKeyCheck("checking");
     try {
       const ok = await invoke<boolean>("validate_groq_key", { key: k });
+      if (seq !== groqCheckSeq.current) return; // stale response
       setGroqKeyCheck(ok ? "ok" : "bad");
-    } catch {
-      setGroqKeyCheck("bad");
+    } catch (e) {
+      if (seq !== groqCheckSeq.current) return;
+      // Only a real 401 means the key is bad — offline/429/5xx is
+      // "couldn't check", not "rejected" (review finding).
+      setGroqKeyCheck(String(e).includes("invalid key") ? "bad" : "unreachable");
     }
   }
 
@@ -717,6 +725,7 @@ function App() {
                 value={settings.groq_api_key}
                 onChange={(e) => {
                   update("groq_api_key", e.target.value);
+                  groqCheckSeq.current++; // invalidate any in-flight check
                   setGroqKeyCheck(null);
                 }}
                 onBlur={(e) => {
@@ -733,6 +742,8 @@ function App() {
                     <>
                       <Check size={11} /> key valid
                     </>
+                  ) : groqKeyCheck === "unreachable" ? (
+                    "couldn't check (offline?) — key saved anyway"
                   ) : (
                     "key rejected — double-check it"
                   )}

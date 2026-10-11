@@ -969,3 +969,4 @@ kbd {
 .fb-keycheck.checking { color: var(--dim); }
 .fb-keycheck.ok { color: var(--ok); }
 .fb-keycheck.bad { color: var(--bad); }
+.fb-keycheck.unreachable { color: var(--dim); }
