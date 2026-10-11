@@ -226,27 +226,48 @@ pub async fn provision(app: &tauri::AppHandle) -> Result<()> {
     let reqs = dir.join("requirements.txt");
     std::fs::write(&reqs, REQUIREMENTS)?;
     let venv = dir.join("venv");
+    // Each uv child registers in R2T2_PIDS under the spawn gate, exactly like
+    // the sidecar itself: a quit mid-provision reaps the uv process instead of
+    // orphaning a half-writing installer that races the next launch's setup.
     let run_uv = {
         let uv_bin = uv_bin.clone();
         let dir = dir.clone();
         move |args: Vec<String>| {
             let uv_bin = uv_bin.clone();
             let dir = dir.clone();
-            tokio::task::spawn_blocking(move || {
-                Command::new(&uv_bin)
-                    .args(&args)
-                    .env("UV_PYTHON_INSTALL_DIR", dir.join("python"))
-                    .env("UV_CACHE_DIR", dir.join("cache"))
-                    .env("UV_NO_CONFIG", "1")
-                    .env("UV_PYTHON_PREFERENCE", "only-managed")
-                    .stdin(Stdio::null())
-                    .output()
+            tokio::task::spawn_blocking(move || -> std::io::Result<std::process::Output> {
+                let child = {
+                    let _gate = SPAWN_GATE.lock();
+                    if SHUTTING_DOWN.load(Ordering::SeqCst) {
+                        return Err(std::io::Error::other("app is shutting down"));
+                    }
+                    let child = Command::new(&uv_bin)
+                        .args(&args)
+                        .env("UV_PYTHON_INSTALL_DIR", dir.join("python"))
+                        .env("UV_CACHE_DIR", dir.join("cache"))
+                        .env("UV_NO_CONFIG", "1")
+                        .env("UV_PYTHON_PREFERENCE", "only-managed")
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .spawn()?;
+                    R2T2_PIDS.lock().push(child.id());
+                    child
+                };
+                let pid = child.id();
+                let out = child.wait_with_output();
+                R2T2_PIDS.lock().retain(|&p| p != pid);
+                out
             })
         }
     };
     emit_runtime_stage(app, "installing python 3.12 (uv-managed)");
     let out = run_uv(vec![
         "venv".into(),
+        // A failed/interrupted earlier setup (or a pin bump) leaves a venv
+        // behind; without --clear, uv refuses to reuse the path and every
+        // retry fails until the dir is hand-deleted.
+        "--clear".into(),
         "--python".into(),
         PYTHON_SERIES.into(),
         venv.to_string_lossy().into_owned(),
@@ -384,6 +405,18 @@ impl R2t2Server {
                     STARTUP_TIMEOUT.as_secs()
                 ));
             }
+            // A child that died (port-bind race, import crash) must fail NOW,
+            // not read "starting" for the full timeout.
+            let exited = server
+                .child
+                .lock()
+                .as_mut()
+                .and_then(|c| c.try_wait().ok())
+                .flatten();
+            if let Some(code) = exited {
+                server.kill(); // deregisters the PID
+                return Err(anyhow!("r2t2 sidecar exited during startup ({code})"));
+            }
             if let Ok(r) = client.get(format!("{base_url}/health")).send().await {
                 let code = r.status();
                 if code.is_success() {
@@ -435,9 +468,16 @@ impl R2t2Server {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         if !status.is_success() {
-            // Truncate the body: a python exception string could embed prompt
-            // content (hotwords), and this error reaches the app log.
-            let brief: String = text.chars().take(160).collect();
+            // This error string reaches the app log. A python exception could
+            // embed prompt content, so redact any hotword that leaked into
+            // the body, then truncate.
+            let mut brief: String = text.chars().take(160).collect();
+            for hw in hotwords {
+                if !hw.is_empty() && brief.to_lowercase().contains(&hw.to_lowercase()) {
+                    brief = "<redacted: error text contained hotword content>".into();
+                    break;
+                }
+            }
             return Err(anyhow!("r2t2 transcribe {status}: {brief}"));
         }
         let parsed: TranscribeResponse =
