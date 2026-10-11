@@ -93,3 +93,36 @@ Todd opens his Mac Studio Monday morning, FunButton is in the menu bar, he holds
 - Don't quietly skip the PROGRESS.md updates — Todd reads them as the heartbeat.
 
 Go.
+
+## Gotchas (hard-won — read before touching these areas)
+
+- **`cargo test` / `cargo clippy` do NOT rebuild `target/release/funbutton`.** A
+  runtime QA launched after only tests/clippy silently exercises a STALE binary
+  (this burned a whole QA pass on 2026-10-11). Always `cargo build --release`
+  immediately before launching the binary.
+- **AppleEvent quit (`osascript -e 'quit app …'`) silently no-ops (rc 0!) on an
+  unbundled dev binary** — it isn't LaunchServices-registered. Teardown/quit QA
+  must run against the bundled `FunButton.app` (`cargo tauri build --bundles app`),
+  where it works from this shell.
+- **clippy `items_after_test_module`**: a `#[cfg(test)] mod tests` must be the
+  LAST item in a file. Corollary: two PRs that each append a tests module to the
+  same file ALWAYS conflict — stack them or share one module.
+- **Manifest schema gate is the forward-safety mechanism**: `fetch_manifest`
+  rejects a live manifest whose `schema_version` differs from the baked one.
+  Bump the version whenever entry shape changes; old apps then keep their baked
+  copy. NEVER mutate `filename`/`size_bytes`/`sha256` of an existing model id —
+  that flips it to "missing" fleet-wide (live manifest!) and re-downloads; add a
+  new id instead.
+- **R2T2 (mlx-audio) decodes greedy (temp 0) but the HOTWORD LIST ORDER changes
+  the system prompt and therefore the output.** Tests must pin the proven order
+  (ClickFunnels, auth_middleware.rs, kubectl). Window-title hotwords only arrive
+  if you `wait_context_up_to(…)` — the AX read lands ms after the app name, so a
+  non-blocking `context_now()` at STT time misses it essentially always.
+- **R2T2 runtime provisioning is pinned end-to-end** (uv 0.13.0 by sha256 →
+  uv-managed CPython 3.12 `only-managed` → `==`-pinned wheels). `only-managed`
+  matters: a Homebrew-python venv breaks when brew upgrades/removes python@3.12.
+  Pins live in `r2t2.rs::REQUIREMENTS`; changing them reprovisions via the stamp.
+- **Multi-file models**: `is_installed` = every file at exact size; store subdir
+  = `entry.filename`; delete removes the whole dir. License + derivative notice
+  must travel with the weights (LICENSE-R2T2.txt is a pinned manifest file,
+  NOTICE-R2T2.txt is written at install).
