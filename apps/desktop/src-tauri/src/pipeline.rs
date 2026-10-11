@@ -25,6 +25,7 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
         api_key,
         backend,
         stt_backend,
+        stt_model_id,
         ollama_url,
         ollama_model,
         mode_override,
@@ -41,6 +42,7 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
             s.groq_api_key.clone(),
             s.backend,
             s.stt_backend,
+            s.stt_model_id.clone(),
             s.ollama_url.clone(),
             s.ollama_model.clone(),
             s.mode_override,
@@ -85,20 +87,74 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
     // picked, the other engines remain silent fallbacks so dictation
     // degrades instead of hard-failing.
     let stt_prompt = build_stt_prompt(&dictionary, mode);
+    // Experimental R2T2 sidecar: participates only when the user picked the
+    // R2T2 model in Settings → Models AND its sidecar is up. Hotwords = user
+    // dictionary + focused-window title tokens — whatever AX context has
+    // arrived by now (non-blocking; context_now caches, so the cleanup-time
+    // read below still works). Never logged, never persisted.
+    let r2t2_srv = {
+        let active_is_r2t2 = {
+            let m = state.manifest.lock();
+            m.active_entry(crate::models::Role::Stt, &stt_model_id)
+                .map(|e| e.runtime == crate::models::ModelRuntime::MlxR2t2)
+                .unwrap_or(false)
+        };
+        if active_is_r2t2 {
+            state.r2t2.lock().clone()
+        } else {
+            None
+        }
+    };
+    let hotwords = if r2t2_srv.is_some() {
+        // The AX title read lands milliseconds after the app name, so a
+        // non-blocking read here would miss it nearly every time. Give it a
+        // short bounded wait — only on the R2T2 + capture-on path, so no
+        // other dictation pays it. Capture-off returns instantly (channel
+        // already closed). The result is cached for the cleanup-time read.
+        let ctx = if capture_context {
+            detect.wait_context_up_to(std::time::Duration::from_millis(250))
+        } else {
+            None
+        };
+        let hw = build_hotwords(&dictionary, ctx.as_ref());
+        // Counts only — hotword CONTENT is never logged.
+        log::debug!(
+            "r2t2 hotwords: dict={} title_context={} total={}",
+            dictionary.len(),
+            ctx.as_ref().and_then(|c| c.window_title.as_ref()).is_some(),
+            hw.len()
+        );
+        hw
+    } else {
+        Vec::new()
+    };
     #[derive(Clone, Copy, PartialEq)]
     enum SttSource {
+        R2t2,
         Embedded,
         Cloud,
         GroqByok,
     }
-    let order: [SttSource; 3] = match stt_backend {
-        SttBackend::Local => [SttSource::Embedded, SttSource::Cloud, SttSource::GroqByok],
-        SttBackend::Groq => [SttSource::Cloud, SttSource::GroqByok, SttSource::Embedded],
+    let mut order: Vec<SttSource> = match stt_backend {
+        SttBackend::Local => vec![SttSource::Embedded, SttSource::Cloud, SttSource::GroqByok],
+        SttBackend::Groq => vec![SttSource::Cloud, SttSource::GroqByok, SttSource::Embedded],
     };
+    if r2t2_srv.is_some() {
+        // The explicit R2T2 pick leads a local-first preference; under a
+        // cloud-first preference it still outranks embedded whisper.
+        match stt_backend {
+            SttBackend::Local => order.insert(0, SttSource::R2t2),
+            SttBackend::Groq => order.insert(2, SttSource::R2t2),
+        }
+    }
     let mut raw: Option<String> = None;
     let mut stt_errors: Vec<String> = Vec::new();
     for src in order {
         let (name, attempt): (&str, anyhow::Result<String>) = match src {
+            SttSource::R2t2 => match &r2t2_srv {
+                Some(srv) => ("r2t2", srv.transcribe(wav.clone(), &hotwords).await),
+                None => continue,
+            },
             SttSource::Embedded => {
                 let stt = Arc::clone(&state.stt);
                 let wav_c = wav.clone();
@@ -424,6 +480,66 @@ fn build_stt_prompt(dictionary: &[String], mode: Mode) -> Option<String> {
     Some(prompt)
 }
 
+/// Hotword list for the R2T2 sidecar: user dictionary terms first (they
+/// outrank), then identifier-ish tokens from the focused window title.
+/// Deduped case-insensitively, capped, commas stripped (the transport joins
+/// on ','). PRIVACY: callers must never log or persist the result.
+fn build_hotwords(
+    dictionary: &[String],
+    focus: Option<&crate::app_context::FocusContext>,
+) -> Vec<String> {
+    const CAP: usize = 24;
+    fn push(out: &mut Vec<String>, t: &str) {
+        let t = t.replace(',', " ");
+        let t = t.trim();
+        if t.len() >= 2
+            && t.len() <= 48
+            && out.len() < CAP
+            && !out.iter().any(|x| x.eq_ignore_ascii_case(t))
+        {
+            out.push(t.to_string());
+        }
+    }
+    let mut out = Vec::new();
+    for d in dictionary {
+        push(&mut out, d);
+    }
+    if let Some(f) = focus {
+        if let Some(title) = &f.window_title {
+            for tok in title.split(|c: char| {
+                c.is_whitespace()
+                    || matches!(
+                        c,
+                        '—' | '–'
+                            | '|'
+                            | '·'
+                            | ':'
+                            | ','
+                            | ';'
+                            | '('
+                            | ')'
+                            | '['
+                            | ']'
+                            | '{'
+                            | '}'
+                            | '<'
+                            | '>'
+                            | '"'
+                            | '\''
+                    )
+            }) {
+                let t = tok.trim_matches(|c: char| !(c.is_alphanumeric() || "._-/".contains(c)));
+                // Identifier-ish only: ≥3 chars with at least one letter —
+                // skips noise like "1", "—", "to".len()==2 etc.
+                if t.len() >= 3 && t.chars().any(|c| c.is_alphabetic()) {
+                    push(&mut out, t);
+                }
+            }
+        }
+    }
+    out
+}
+
 fn post_process(s: String) -> String {
     let trimmed = s.trim();
     let stripped = if (trimmed.starts_with('"') && trimmed.ends_with('"'))
@@ -445,11 +561,60 @@ fn post_process(s: String) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::build_hotwords;
+    use crate::app_context::FocusContext;
     use crate::app_detect::FrontApp;
     use crate::cleanup::{self, Mode};
     use crate::history::History;
     use crate::state::{AppModeRule, AppState, ModeOverride, Settings};
     use std::sync::Arc;
+
+    #[test]
+    fn hotwords_dictionary_first_then_title_tokens_deduped_capped() {
+        let dict = vec!["ClickFunnels".to_string(), "kubectl".to_string()];
+        let focus = FocusContext {
+            window_title: Some("auth_middleware.rs — funbutton | clickfunnels (3) to".into()),
+            focused_role: None,
+            selected_text: None,
+        };
+        let hw = build_hotwords(&dict, Some(&focus));
+        // Dictionary leads, in order.
+        assert_eq!(hw[0], "ClickFunnels");
+        assert_eq!(hw[1], "kubectl");
+        // Identifier-ish title tokens arrive after.
+        assert!(hw.contains(&"auth_middleware.rs".to_string()));
+        assert!(hw.contains(&"funbutton".to_string()));
+        // Case-insensitive dedupe: "clickfunnels" from the title is dropped.
+        assert_eq!(
+            hw.iter()
+                .filter(|t| t.eq_ignore_ascii_case("clickfunnels"))
+                .count(),
+            1
+        );
+        // Noise is dropped: separators, "(3)" (no letter ≥3), short "to".
+        assert!(!hw
+            .iter()
+            .any(|t| t == "—" || t == "|" || t == "3" || t == "to"));
+
+        // Cap holds even with a pathological title.
+        let many = (0..100)
+            .map(|i| format!("tok{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let focus = FocusContext {
+            window_title: Some(many),
+            focused_role: None,
+            selected_text: None,
+        };
+        assert!(build_hotwords(&[], Some(&focus)).len() <= 24);
+
+        // No context, no dictionary → empty (never fabricate hotwords).
+        assert!(build_hotwords(&[], None).is_empty());
+
+        // Commas can't break the comma-joined transport.
+        let hw = build_hotwords(&["a,b".to_string()], None);
+        assert_eq!(hw, vec!["a b".to_string()]);
+    }
 
     /// The exact mode resolution the pipeline runs at the top of `run()`: read
     /// the settings lock, resolve. `resolve_mode` already applies a global

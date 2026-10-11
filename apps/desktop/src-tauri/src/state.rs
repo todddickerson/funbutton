@@ -370,6 +370,16 @@ pub struct AppState {
     pub manifest: Mutex<Manifest>,
     /// In-flight model downloads — cancellable, and cancelled on quit.
     pub downloads: DownloadManagerHandle,
+    /// `Some` once the experimental R2T2 STT sidecar is up — set only when
+    /// the active STT model's runtime is `MlxR2t2` (see `crate::r2t2`).
+    pub r2t2: Mutex<Option<crate::r2t2::R2t2ServerHandle>>,
+    /// Set when the R2T2 sidecar (or its runtime provisioning) failed, so the
+    /// UI can distinguish "still warming up" from "not going to happen".
+    pub r2t2_error: Mutex<Option<String>>,
+    /// True while a provision-and-spawn task for the R2T2 sidecar is in
+    /// flight — prevents a pick flip-flop from racing two provisioners over
+    /// the same runtime dir (see `sync_r2t2`).
+    pub r2t2_starting: AtomicBool,
 }
 
 pub type AppStateHandle = Arc<AppState>;
@@ -392,6 +402,9 @@ impl AppState {
             shutting_down: AtomicBool::new(false),
             manifest: Mutex::new(Manifest::baked()),
             downloads: DownloadManager::new(),
+            r2t2: Mutex::new(None),
+            r2t2_error: Mutex::new(None),
+            r2t2_starting: AtomicBool::new(false),
         })
     }
 }
