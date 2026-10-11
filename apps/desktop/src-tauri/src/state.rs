@@ -320,6 +320,14 @@ pub enum Status {
 }
 
 impl Status {
+    /// Re-entrancy gate for the push-to-talk loop (gauntlet #8): a new hold
+    /// is accepted only when no previous dictation is mid-flight. `Idle` and
+    /// `Error` are terminal states of the prior run; the rest mean a run is
+    /// live and a second one would overlap recordings and clobber status.
+    pub fn accepts_new_hold(self) -> bool {
+        matches!(self, Status::Idle | Status::Error)
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Status::Idle => "idle",
@@ -406,5 +414,27 @@ impl AppState {
             r2t2_error: Mutex::new(None),
             r2t2_starting: AtomicBool::new(false),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hold_accepted_only_between_runs() {
+        assert!(Status::Idle.accepts_new_hold());
+        assert!(
+            Status::Error.accepts_new_hold(),
+            "Error is terminal — a retry must work"
+        );
+        for busy in [
+            Status::Recording,
+            Status::Transcribing,
+            Status::Cleaning,
+            Status::Pasting,
+        ] {
+            assert!(!busy.accepts_new_hold(), "{busy:?} must refuse a new hold");
+        }
     }
 }
