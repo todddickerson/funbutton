@@ -1792,16 +1792,54 @@ fn handle_hotkey_loop(
                             emit_status(&app_h, Status::Idle, None);
                         }
                         Err(e) => {
+                            // Full chain to the log; a short human cause to the
+                            // pill/onboarding rail (the raw anyhow chain used to
+                            // render verbatim in an 11px one-liner).
                             log::error!("pipeline failed: {e:#}");
                             *state_h.status.lock() = Status::Error;
                             tray::sync(&app_h);
-                            emit_status(&app_h, Status::Error, Some(format!("{e:#}")));
+                            emit_status(&app_h, Status::Error, Some(humanize_pipeline_error(&e)));
                         }
                     }
                 });
             }
         }
     }
+}
+
+/// Map a pipeline failure to a short, human cause for the HUD/onboarding rail.
+/// The full anyhow chain always goes to the log (caller's responsibility) —
+/// this is only what a user can act on, sized for the pill's one-liner.
+fn humanize_pipeline_error(e: &anyhow::Error) -> String {
+    let chain = format!("{e:#}");
+    let lower = chain.to_lowercase();
+    let cause = if lower.contains("no speech detected") {
+        "didn't hear anything — hold and speak"
+    } else if lower.contains("no transcription backend") {
+        "no speech engine ready — open Settings → Models"
+    } else if lower.contains("invalid api key") || lower.contains("401") || lower.contains("403") {
+        "key rejected — check your Groq key in Settings"
+    } else if lower.contains("connection refused")
+        || lower.contains("timed out")
+        || lower.contains("dns")
+        || lower.contains("network")
+        || lower.contains("connect")
+    {
+        "network hiccup — on-device engines still work; run it back"
+    } else if lower.contains("whisper") || lower.contains("stt") {
+        "speech engine hiccuped — try again, or restart engines in Settings"
+    } else {
+        // Unknown failure: first line of the chain, bounded so the pill's
+        // one-liner never gets a wall of nested context.
+        let first = chain.split(':').next().unwrap_or(&chain).trim();
+        let short: String = first.chars().take(90).collect();
+        return if short.len() < first.len() {
+            format!("{short}…")
+        } else {
+            short
+        };
+    };
+    cause.to_string()
 }
 
 fn chrono_today() -> String {
@@ -1895,5 +1933,47 @@ mod tests {
             None => std::env::remove_var("FUNBUTTON_MODELS_DIR"),
         }
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod error_copy_tests {
+    use super::humanize_pipeline_error;
+    use anyhow::anyhow;
+
+    #[test]
+    fn known_failures_get_actionable_one_liners() {
+        let cases = [
+            (anyhow!("no speech detected"), "didn't hear anything"),
+            (
+                anyhow!("no transcription backend available (embedded-whisper: not ready)"),
+                "no speech engine ready",
+            ),
+            (anyhow!("transcribe 401: invalid api key"), "key rejected"),
+            (
+                anyhow!("send download request: connection refused (os error 61)"),
+                "network hiccup",
+            ),
+            (
+                anyhow!("whisper run: decode failed"),
+                "speech engine hiccuped",
+            ),
+        ];
+        for (err, want) in cases {
+            let got = humanize_pipeline_error(&err);
+            assert!(got.contains(want), "{err:#} → {got:?} (wanted {want:?})");
+            assert!(got.len() <= 100, "one-liner budget: {got:?}");
+        }
+    }
+
+    #[test]
+    fn unknown_failures_are_bounded_not_dumped() {
+        let deep = anyhow!("outer context").context("middle").context("inner");
+        let got = humanize_pipeline_error(&deep);
+        assert!(got.len() <= 100, "{got:?}");
+        assert!(
+            !got.contains(':'),
+            "no raw chain separators in the one-liner: {got:?}"
+        );
     }
 }
