@@ -320,6 +320,14 @@ pub enum Status {
 }
 
 impl Status {
+    /// Re-entrancy gate for the push-to-talk loop (gauntlet #8): a new hold
+    /// is accepted only when no previous dictation is mid-flight. `Idle` and
+    /// `Error` are terminal states of the prior run; the rest mean a run is
+    /// live and a second one would overlap recordings and clobber status.
+    pub fn accepts_new_hold(self) -> bool {
+        matches!(self, Status::Idle | Status::Error)
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Status::Idle => "idle",
@@ -370,6 +378,16 @@ pub struct AppState {
     pub manifest: Mutex<Manifest>,
     /// In-flight model downloads — cancellable, and cancelled on quit.
     pub downloads: DownloadManagerHandle,
+    /// `Some` once the experimental R2T2 STT sidecar is up — set only when
+    /// the active STT model's runtime is `MlxR2t2` (see `crate::r2t2`).
+    pub r2t2: Mutex<Option<crate::r2t2::R2t2ServerHandle>>,
+    /// Set when the R2T2 sidecar (or its runtime provisioning) failed, so the
+    /// UI can distinguish "still warming up" from "not going to happen".
+    pub r2t2_error: Mutex<Option<String>>,
+    /// True while a provision-and-spawn task for the R2T2 sidecar is in
+    /// flight — prevents a pick flip-flop from racing two provisioners over
+    /// the same runtime dir (see `sync_r2t2`).
+    pub r2t2_starting: AtomicBool,
 }
 
 pub type AppStateHandle = Arc<AppState>;
@@ -392,6 +410,31 @@ impl AppState {
             shutting_down: AtomicBool::new(false),
             manifest: Mutex::new(Manifest::baked()),
             downloads: DownloadManager::new(),
+            r2t2: Mutex::new(None),
+            r2t2_error: Mutex::new(None),
+            r2t2_starting: AtomicBool::new(false),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hold_accepted_only_between_runs() {
+        assert!(Status::Idle.accepts_new_hold());
+        assert!(
+            Status::Error.accepts_new_hold(),
+            "Error is terminal — a retry must work"
+        );
+        for busy in [
+            Status::Recording,
+            Status::Transcribing,
+            Status::Cleaning,
+            Status::Pasting,
+        ] {
+            assert!(!busy.accepts_new_hold(), "{busy:?} must refuse a new hold");
+        }
     }
 }

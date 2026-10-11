@@ -34,6 +34,9 @@ pub const TRAY_ID: &str = "main";
 struct Snapshot {
     status: Status,
     stt: &'static str,
+    /// Which STT engine the state line is about ("whisper" or "r2t2") — the
+    /// active pick, so a failed R2T2 isn't blamed on whisper.
+    stt_engine: &'static str,
     cleanup: &'static str,
     mode: ModeOverride,
     hotkey: HotkeyKind,
@@ -135,6 +138,15 @@ fn spawn_warmup_watcher(app: AppHandle) {
 
 fn snapshot(app: &AppHandle) -> Snapshot {
     let st = app.state::<AppStateHandle>();
+    // Lock order everywhere in the app: manifest, then settings.
+    let stt_engine = {
+        let manifest = st.manifest.lock();
+        let s = st.settings.lock();
+        match manifest.active_entry(crate::models::Role::Stt, &s.stt_model_id) {
+            Some(e) if e.runtime == crate::models::ModelRuntime::MlxR2t2 => "r2t2",
+            _ => "whisper",
+        }
+    };
     let (mode, hotkey, words_today, has_cloud) = {
         let s = st.settings.lock();
         (
@@ -157,6 +169,7 @@ fn snapshot(app: &AppHandle) -> Snapshot {
     Snapshot {
         status,
         stt,
+        stt_engine,
         cleanup,
         mode,
         hotkey,
@@ -382,26 +395,29 @@ fn status_text(s: &Snapshot) -> String {
     }
 }
 
-fn stt_text(s: &Snapshot) -> &'static str {
+fn stt_text(s: &Snapshot) -> String {
+    let e = s.stt_engine;
     match s.stt {
-        "ready" => "✓ whisper — on-device, ready",
+        "ready" => format!("✓ {e} — on-device, ready"),
         // Missing/downloading/failed lines are enabled (click → Settings).
         "missing" => {
             if s.has_cloud {
-                "○ whisper — model not downloaded · using cloud · click to get it"
+                format!("○ {e} — model not downloaded · using cloud · click to get it")
             } else {
-                "○ whisper — model not downloaded · click to get it"
+                format!("○ {e} — model not downloaded · click to get it")
             }
         }
-        "downloading" => "◌ whisper — downloading model…",
+        "downloading" => format!("◌ {e} — downloading model…"),
         "failed" => {
-            if s.has_cloud {
-                "✕ whisper — down, using cloud · click to fix"
+            // The R2T2 pick failing still leaves embedded whisper as the
+            // first fallback rung — say so instead of "no fallback".
+            if s.has_cloud || e == "r2t2" {
+                format!("✕ {e} — down, using fallback · click to fix")
             } else {
-                "✕ whisper — down, no fallback · click to fix"
+                format!("✕ {e} — down, no fallback · click to fix")
             }
         }
-        _ => "◌ whisper — warming up…",
+        _ => format!("◌ {e} — warming up…"),
     }
 }
 

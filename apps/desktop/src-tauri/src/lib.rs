@@ -16,6 +16,7 @@ mod keychain;
 mod models;
 mod ollama;
 mod pipeline;
+mod r2t2;
 mod state;
 mod tray;
 
@@ -46,6 +47,49 @@ fn emit_status(app: &AppHandle, status: Status, message: Option<String>) {
             message,
         },
     );
+}
+
+/// Map a pipeline failure to a short, human cause for the HUD/onboarding rail.
+/// The full anyhow chain always goes to the log (caller's responsibility) —
+/// this is only what a user can act on, sized for the pill's one-liner.
+fn humanize_pipeline_error(e: &anyhow::Error) -> String {
+    let chain = format!("{e:#}");
+    let lower = chain.to_lowercase();
+    // ORDER MATTERS: the pipeline wraps every per-engine failure inside one
+    // "no transcription backend available (engine: detail | …)" umbrella, so
+    // the SPECIFIC signals (key, network) must be checked before the
+    // umbrella or they can never match (review finding: a Groq-only user
+    // with a revoked key was told to open Settings → Models).
+    let cause = if lower.contains("no speech detected") {
+        "didn't hear anything — hold and speak"
+    } else if lower.contains("invalid api key") || lower.contains("401") || lower.contains("403") {
+        "key rejected — check your Groq key in Settings"
+    } else if lower.contains("connection refused")
+        || lower.contains("timed out")
+        || lower.contains("dns")
+        || lower.contains("network")
+        || lower.contains("connect")
+    {
+        "network hiccup — on-device engines still work; run it back"
+    } else if lower.contains("not ready") || lower.contains("model not present") {
+        "no speech engine ready — open Settings → Models"
+    } else if lower.contains("no transcription backend")
+        || lower.contains("whisper")
+        || lower.contains("stt")
+    {
+        "speech engine hiccuped — try again, or restart engines in Settings"
+    } else {
+        // Unknown failure: first line of the chain, bounded so the pill's
+        // one-liner never gets a wall of nested context.
+        let first = chain.split(':').next().unwrap_or(&chain).trim();
+        let short: String = first.chars().take(90).collect();
+        return if short.len() < first.len() {
+            format!("{short}…")
+        } else {
+            short
+        };
+    };
+    cause.to_string()
 }
 
 #[derive(Serialize, Clone)]
@@ -237,11 +281,24 @@ pub(crate) fn engine_state(state: &AppStateHandle, role: Role) -> &'static str {
         return "missing";
     }
     match role {
-        Role::Stt => match state.stt.status() {
-            crate::embedded_stt::SttStatus::Ready => "ready",
-            crate::embedded_stt::SttStatus::Failed(_) => "failed",
-            crate::embedded_stt::SttStatus::Starting => "starting",
-        },
+        Role::Stt => {
+            // The experimental sidecar-runtime pick reports the sidecar's
+            // state (provisioning reads as "starting"), not whisper's.
+            if entry.runtime == models::ModelRuntime::MlxR2t2 {
+                return if state.r2t2.lock().is_some() {
+                    "ready"
+                } else if state.r2t2_error.lock().is_some() {
+                    "failed"
+                } else {
+                    "starting"
+                };
+            }
+            match state.stt.status() {
+                crate::embedded_stt::SttStatus::Ready => "ready",
+                crate::embedded_stt::SttStatus::Failed(_) => "failed",
+                crate::embedded_stt::SttStatus::Starting => "starting",
+            }
+        }
         Role::Cleanup => {
             if state.embedded.lock().is_some() {
                 "ready"
@@ -315,13 +372,170 @@ fn resolve_model_path(state: &AppStateHandle, role: Role) -> Option<PathBuf> {
     }
 }
 
-/// (Re)load the on-device STT engine from the active model, if installed.
+/// Path of the whisper model the embedded engine should run. When the active
+/// STT pick is a builtin (whisper) model, that's it; when the user picked the
+/// experimental sidecar-runtime model, whisper stays warm on the best
+/// installed builtin (default first) as the fallback chain's first rung.
+fn resolve_whisper_path(state: &AppStateHandle) -> Option<PathBuf> {
+    let manifest = state.manifest.lock();
+    let s = state.settings.lock();
+    if let Some(e) = manifest.active_entry(Role::Stt, &s.stt_model_id) {
+        if e.runtime == models::ModelRuntime::Builtin {
+            return models::is_installed(e).then(|| models::model_path(e));
+        }
+    }
+    let builtin_installed = |pred: &dyn Fn(&models::ModelEntry) -> bool| {
+        manifest
+            .models
+            .iter()
+            .find(|e| {
+                e.role == Role::Stt
+                    && e.runtime == models::ModelRuntime::Builtin
+                    && pred(e)
+                    && models::is_installed(e)
+            })
+            .map(models::model_path)
+    };
+    builtin_installed(&|e| e.default).or_else(|| builtin_installed(&|_| true))
+}
+
+/// The active STT entry iff it's the experimental R2T2 sidecar runtime AND
+/// its files are installed — i.e. the sidecar should be running.
+fn active_r2t2_entry(state: &AppStateHandle) -> Option<models::ModelEntry> {
+    let manifest = state.manifest.lock();
+    let s = state.settings.lock();
+    manifest
+        .active_entry(Role::Stt, &s.stt_model_id)
+        .filter(|e| e.runtime == models::ModelRuntime::MlxR2t2 && models::is_installed(e))
+        .cloned()
+}
+
+/// Should a freshly-started R2T2 sidecar be stored? No if quit began, and no
+/// if the user's active STT pick moved away while it was provisioning /
+/// starting (a flip-flop must not leave a 1.5 GB model resident for an
+/// engine nobody picked).
+fn should_store_r2t2(state: &AppStateHandle) -> bool {
+    !state.shutting_down.load(Ordering::SeqCst) && active_r2t2_entry(state).is_some()
+}
+
+/// Mirror of `store_or_reap_cleanup` for the R2T2 sidecar: store the handle,
+/// or kill it if quit began — or the pick changed — while it was starting.
+/// The decision and the store happen under the `r2t2` lock, which both quit
+/// teardown and `sync_r2t2`'s kill path also take, so a server is either
+/// visible to their kill or reaped here.
+fn store_or_reap_r2t2(state: &AppStateHandle, server: r2t2::R2t2Server) -> bool {
+    let mut guard = state.r2t2.lock();
+    if !should_store_r2t2(state) {
+        drop(guard);
+        server.kill();
+        false
+    } else {
+        *guard = Some(Arc::new(server));
+        true
+    }
+}
+
+/// Bring the R2T2 sidecar in line with the active STT pick: spawn it (after
+/// one-time runtime provisioning) when the experimental model is active +
+/// installed, kill it otherwise. Never blocks — all heavy work rides a task.
+fn sync_r2t2(app: &AppHandle, state: &AppStateHandle) {
+    let Some(entry) = active_r2t2_entry(state) else {
+        if let Some(srv) = state.r2t2.lock().take() {
+            log::info!("r2t2 sidecar stopped (model no longer active)");
+            srv.kill();
+        }
+        *state.r2t2_error.lock() = None;
+        return;
+    };
+    if state.r2t2.lock().is_some() {
+        return; // already up
+    }
+    // One starter at a time: a pick flip-flop (R2T2 → whisper → R2T2) during
+    // the minutes-long first provisioning must not race two `uv` runs over
+    // the same runtime dir. The in-flight task re-checks the pick before
+    // storing (store_or_reap_r2t2), so a task started for an abandoned pick
+    // reaps its server instead of leaking it.
+    if state.r2t2_starting.swap(true, Ordering::SeqCst) {
+        return; // a provision-and-spawn task is already in flight
+    }
+    *state.r2t2_error.lock() = None;
+    let app = app.clone();
+    let state = Arc::clone(state);
+    let model_dir = models::model_path(&entry);
+    tauri::async_runtime::spawn(async move {
+        // The flag MUST clear however this task ends (early return, spawn
+        // failure, panic) — a stuck flag would silently refuse every future
+        // start. On drop it also re-runs sync_r2t2 once: a re-pick that
+        // arrived while the flag was up (and was therefore bounced) gets
+        // served instead of dropped (critic finding #5).
+        struct StartingGuard(AppStateHandle, AppHandle);
+        impl Drop for StartingGuard {
+            fn drop(&mut self) {
+                self.0.r2t2_starting.store(false, Ordering::SeqCst);
+                // Retry ONLY the bounced-pick case (no handle, no recorded
+                // failure, pick active again). A spawn/provision failure sets
+                // r2t2_error and must NOT retry — that would hot-loop.
+                if self.0.r2t2.lock().is_none()
+                    && self.0.r2t2_error.lock().is_none()
+                    && active_r2t2_entry(&self.0).is_some()
+                    && !self.0.shutting_down.load(Ordering::SeqCst)
+                {
+                    log::info!("r2t2: pick is (still) active after a bounced start — retrying");
+                    sync_r2t2(&self.1, &self.0);
+                }
+                let _ = self.1.emit("funbutton:models-changed", ());
+                tray::sync(&self.1);
+            }
+        }
+        let _guard = StartingGuard(Arc::clone(&state), app.clone());
+
+        if !r2t2::runtime_ready() {
+            if let Err(e) = r2t2::provision(&app).await {
+                log::warn!("r2t2 runtime provisioning failed: {e:#}");
+                *state.r2t2_error.lock() = Some(format!("runtime setup failed: {e}"));
+                return;
+            }
+        }
+        // Pick moved away during provisioning? Don't even spawn. (The guard's
+        // drop re-syncs if it moved back.)
+        if !should_store_r2t2(&state) {
+            log::info!("r2t2 sidecar not started: pick changed during provisioning");
+            return;
+        }
+        match r2t2::R2t2Server::spawn(model_dir).await {
+            Ok(server) => {
+                if store_or_reap_r2t2(&state, server) {
+                    log::info!("r2t2 sidecar ready");
+                } else {
+                    log::info!("r2t2 sidecar reaped: quit or pick-change during startup");
+                }
+            }
+            Err(e) => {
+                log::warn!("r2t2 sidecar failed to start: {e:#}");
+                *state.r2t2_error.lock() = Some(e.to_string());
+            }
+        }
+    });
+}
+
+/// (Re)load the on-device STT engines for the active model: the embedded
+/// whisper (active builtin pick, or the installed fallback when the sidecar
+/// model is active) and the R2T2 sidecar. The sidecar is RESTARTED, not
+/// reused: `engine_state` can't tell a live child from a crashed/hung one
+/// (the handle survives either way), so reload is the recovery path — a dead
+/// sidecar after "restart engines" or a model switch comes back fresh
+/// (critic finding #4).
 fn reload_stt(app: &AppHandle, state: &AppStateHandle) {
-    if let Some(path) = resolve_model_path(state, Role::Stt) {
+    if let Some(path) = resolve_whisper_path(state) {
         state.stt.init(app, path);
     } else {
         state.stt.unload();
     }
+    if let Some(srv) = state.r2t2.lock().take() {
+        log::info!("r2t2 sidecar stopped for reload");
+        srv.kill();
+    }
+    sync_r2t2(app, state);
     tray::sync(app);
 }
 
@@ -477,11 +691,31 @@ fn models_delete(
     let freed = models::delete(&entry).map_err(|e| e.to_string())?;
     if active_id(&state, entry.role).as_deref() == Some(entry.id.as_str()) {
         match entry.role {
-            Role::Stt => state.stt.unload(),
+            // Deleting the ACTIVE STT pick must re-resolve engines, not just
+            // unload whisper: with the R2T2 pick this kills the sidecar (its
+            // model is gone — critic finding: it kept transcribing on the
+            // deleted model) and brings whisper back up as the live engine.
+            Role::Stt => reload_stt(&app, state.inner()),
             Role::Cleanup => {
                 if let Some(srv) = state.embedded.lock().take() {
                     srv.kill();
                 }
+            }
+        }
+    }
+    // The sidecar model owns the python runtime — deleting the model also
+    // reclaims the ~480 MB runtime dir (reprovisioning is automatic on a
+    // future re-download + activate).
+    if entry.runtime == models::ModelRuntime::MlxR2t2 {
+        if let Some(srv) = state.r2t2.lock().take() {
+            srv.kill();
+        }
+        let rt_dir = r2t2::runtime_dir();
+        if rt_dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&rt_dir) {
+                log::warn!("could not remove r2t2 runtime dir: {e}");
+            } else {
+                log::info!("removed r2t2 runtime dir ({})", rt_dir.display());
             }
         }
     }
@@ -1056,11 +1290,14 @@ pub fn run() {
             // makes a keyless install dictate. If it's missing, we don't start
             // the engine; onboarding / the model manager drive the download and
             // then call reload_stt. Same story for cleanup below.
-            if let Some(stt_path) = resolve_model_path(&app_state, Role::Stt) {
+            if let Some(stt_path) = resolve_whisper_path(&app_state) {
                 app_state.stt.init(&app.handle().clone(), stt_path);
             } else {
                 log::info!("STT model not present — awaiting download");
             }
+            // Experimental R2T2 sidecar — only spawns when the user previously
+            // picked it in Settings → Models and its files are installed.
+            sync_r2t2(&app.handle().clone(), &app_state);
 
             // Spawn the local-inference server in the background IF the cleanup
             // model is downloaded. Cold-start is a few seconds; the pipeline
@@ -1288,6 +1525,23 @@ pub(crate) fn shutdown(app: &AppHandle) {
         log::error!("shutdown: llama-server orphan reap panicked (continuing)");
     }
 
+    // (b.5) Same two-step for the experimental R2T2 sidecar: kill the stored
+    // handle, then latch + reap any child whose startup was still in flight.
+    // Its MLX/Metal state lives in the child process, so the kill is the
+    // whole teardown.
+    if catch_unwind(AssertUnwindSafe(|| {
+        if let Some(srv) = state.r2t2.lock().take() {
+            srv.kill();
+        }
+    }))
+    .is_err()
+    {
+        log::error!("shutdown: r2t2 sidecar kill panicked (continuing)");
+    }
+    if catch_unwind(AssertUnwindSafe(r2t2::begin_shutdown_and_reap)).is_err() {
+        log::error!("shutdown: r2t2 orphan reap panicked (continuing)");
+    }
+
     // (c) Unload the whisper/Metal context while Metal is still alive.
     if catch_unwind(AssertUnwindSafe(|| state.stt.unload())).is_err() {
         log::error!("shutdown: whisper unload panicked (continuing)");
@@ -1323,6 +1577,26 @@ fn handle_hotkey_loop(
                 if state.shutting_down.load(Ordering::SeqCst) {
                     continue;
                 }
+                // Re-entrancy gate (gauntlet #8): a hold landing while the
+                // previous dictation is still in flight would overlap
+                // recordings, let the finishing pipeline clobber the
+                // Recording status (tray + HUD lie), and hide the pill mid-
+                // recording when the old run returns. Refuse it and say why;
+                // a double-Down during Recording is a listener double-fire —
+                // dropped silently so the live hold's Up still pairs.
+                let current = *state.status.lock();
+                if !current.accepts_new_hold() {
+                    if current == Status::Recording {
+                        continue;
+                    }
+                    log::info!("hold refused: previous dictation still {}", current.label());
+                    emit_status(
+                        &app,
+                        current,
+                        Some("busy — still finishing the last one".into()),
+                    );
+                    continue;
+                }
                 let mut rec = recorder.lock();
                 match rec.start() {
                     Ok(()) => {
@@ -1344,6 +1618,13 @@ fn handle_hotkey_loop(
                 }
             }
             HotkeyEvent::Up => {
+                // Pair of the re-entrancy gate: an Up whose Down was refused
+                // (or whose recorder never started) has no live recording —
+                // running the stop path anyway would clobber the in-flight
+                // pipeline's status back to Idle and hide its pill.
+                if *state.status.lock() != Status::Recording {
+                    continue;
+                }
                 let (wav, audio_duration_ms) = {
                     let mut rec = recorder.lock();
                     if rec.sample_count() < 4_000 {
@@ -1387,14 +1668,52 @@ fn handle_hotkey_loop(
                     _ => wav,
                 };
 
+                // Flip to Transcribing SYNCHRONOUSLY, before the task is even
+                // spawned: a second queued Up event must never observe the
+                // stale Recording status (it would pass the gate above, fail
+                // in the stopped recorder, and flip an in-flight run to Error).
+                *state.status.lock() = Status::Transcribing;
                 let app_h = app.clone();
                 let state_h = Arc::clone(&state);
                 rt.spawn(async move {
-                    // Pipeline sets Transcribing itself, but flip it here
-                    // first so the ● → … handoff in the menu bar is instant.
-                    *state_h.status.lock() = Status::Transcribing;
                     tray::sync(&app_h);
-                    let result = pipeline::run(Arc::clone(&state_h), wav).await;
+                    // If this task dies without reaching a terminal state
+                    // (panic anywhere below), the re-entrancy gate would
+                    // refuse every future hold — dictation bricked until
+                    // relaunch. The guard forces Error on an abnormal exit;
+                    // the normal paths set Idle/Error before it drops.
+                    struct StatusGuard(AppStateHandle, AppHandle);
+                    impl Drop for StatusGuard {
+                        fn drop(&mut self) {
+                            let stuck = matches!(
+                                *self.0.status.lock(),
+                                Status::Transcribing | Status::Cleaning | Status::Pasting
+                            );
+                            if stuck {
+                                log::error!(
+                                    "pipeline task ended abnormally mid-run — forcing Error so the hotkey gate reopens"
+                                );
+                                *self.0.status.lock() = Status::Error;
+                                tray::sync(&self.1);
+                                emit_status(
+                                    &self.1,
+                                    Status::Error,
+                                    Some("that one crashed — run it back".into()),
+                                );
+                            }
+                        }
+                    }
+                    let _status_guard = StatusGuard(Arc::clone(&state_h), app_h.clone());
+                    // Mid-pipeline stage reporter (gauntlet #7): pipeline.rs
+                    // flips AppState.status internally but nothing used to
+                    // tell the HUD or the open tray menu — the pill inferred
+                    // stages off a 110ms poll and the menu lagged one phase.
+                    let app_status = app_h.clone();
+                    let on_status = move |st: Status| {
+                        emit_status(&app_status, st, None);
+                        tray::sync(&app_status);
+                    };
+                    let result = pipeline::run(Arc::clone(&state_h), wav, &on_status).await;
                     if let Some(p) = app_h.get_webview_window("pill") {
                         let _ = p.hide();
                     }
@@ -1516,10 +1835,13 @@ fn handle_hotkey_loop(
                             emit_status(&app_h, Status::Idle, None);
                         }
                         Err(e) => {
+                            // Full chain to the log; a short human cause to the
+                            // pill/onboarding rail (the raw anyhow chain used to
+                            // render verbatim in an 11px one-liner).
                             log::error!("pipeline failed: {e:#}");
                             *state_h.status.lock() = Status::Error;
                             tray::sync(&app_h);
-                            emit_status(&app_h, Status::Error, Some(format!("{e:#}")));
+                            emit_status(&app_h, Status::Error, Some(humanize_pipeline_error(&e)));
                         }
                     }
                 });
@@ -1552,4 +1874,125 @@ fn days_to_ymd(mut days: i64) -> (i64, u32, u32) {
     let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
     let y = if m <= 2 { y + 1 } else { y };
     (y, m, d)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::history::History;
+    use crate::models::test_support::ENV_LOCK;
+    use crate::state::{AppState, Settings};
+
+    /// Pins the pick-flip-flop race decision: a sidecar that finished
+    /// starting is stored only if the R2T2 model is STILL the active pick
+    /// (and quit hasn't begun). Uses a throwaway store with sparse files at
+    /// the manifest's exact pinned sizes, so `is_installed` is genuinely
+    /// exercised without 1.6 GB on disk.
+    #[test]
+    fn r2t2_store_decision_follows_the_live_pick() {
+        let _env = ENV_LOCK.lock();
+        let tmp = std::env::temp_dir().join(format!("fb-r2t2-decision-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let saved = std::env::var("FUNBUTTON_MODELS_DIR").ok();
+        std::env::set_var("FUNBUTTON_MODELS_DIR", &tmp);
+
+        let history = Arc::new(History::open(std::path::PathBuf::from(":memory:")).unwrap());
+        let state = AppState::new(Settings::default(), history);
+
+        // Default pick (whisper) → never store a sidecar.
+        assert!(!should_store_r2t2(&state), "whisper pick must not store");
+
+        // Pick R2T2 but files absent → still no (model uninstalled).
+        state.settings.lock().stt_model_id = "confucius4-r2t2".into();
+        assert!(
+            !should_store_r2t2(&state),
+            "uninstalled model must not store"
+        );
+
+        // Materialize the model as sparse files at the exact pinned sizes.
+        let entry = models::Manifest::baked()
+            .entry("confucius4-r2t2")
+            .unwrap()
+            .clone();
+        let dir = models::model_path(&entry);
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in &entry.files {
+            let file = std::fs::File::create(dir.join(&f.filename)).unwrap();
+            file.set_len(f.size_bytes).unwrap();
+        }
+        assert!(models::is_installed(&entry), "sparse files at exact sizes");
+        assert!(should_store_r2t2(&state), "active + installed → store");
+
+        // The user flips back to whisper while the sidecar was starting.
+        state.settings.lock().stt_model_id = "whisper-base.en".into();
+        assert!(
+            !should_store_r2t2(&state),
+            "pick moved away during startup → reap, never store"
+        );
+
+        // Quit beats everything.
+        state.settings.lock().stt_model_id = "confucius4-r2t2".into();
+        state.shutting_down.store(true, Ordering::SeqCst);
+        assert!(!should_store_r2t2(&state), "quit in progress → reap");
+
+        match saved {
+            Some(v) => std::env::set_var("FUNBUTTON_MODELS_DIR", v),
+            None => std::env::remove_var("FUNBUTTON_MODELS_DIR"),
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod error_copy_tests {
+    use super::humanize_pipeline_error;
+    use anyhow::anyhow;
+
+    #[test]
+    fn known_failures_get_actionable_one_liners() {
+        // REAL error shapes: pipeline::run wraps every per-engine failure in
+        // the "no transcription backend available (engine: detail | …)"
+        // umbrella (pipeline.rs), so each case here mirrors what actually
+        // reaches humanize_pipeline_error — the review caught an earlier
+        // version of this test asserting shapes the pipeline never produces.
+        let cases = [
+            (anyhow!("no speech detected"), "didn't hear anything"),
+            // Model not downloaded, keyless — the empty-errors umbrella arm.
+            (
+                anyhow!("no transcription backend available (on-device model not ready and no Groq key set)"),
+                "no speech engine ready",
+            ),
+            // Groq-only user with a revoked key: the 401 is INSIDE the
+            // umbrella and must still win over the generic message.
+            (
+                anyhow!("no transcription backend available (cloud: transcribe 401 Unauthorized: invalid api key | embedded-whisper: embedded STT not ready (\"starting\"))"),
+                "key rejected",
+            ),
+            (
+                anyhow!("no transcription backend available (cloud: transcribe request failed: error sending request: client error (Connect): tcp connect error: connection refused)"),
+                "network hiccup",
+            ),
+            (
+                anyhow!("no transcription backend available (embedded-whisper: whisper run: decode failed)"),
+                "speech engine hiccuped",
+            ),
+        ];
+        for (err, want) in cases {
+            let got = humanize_pipeline_error(&err);
+            assert!(got.contains(want), "{err:#} → {got:?} (wanted {want:?})");
+            assert!(got.len() <= 100, "one-liner budget: {got:?}");
+        }
+    }
+
+    #[test]
+    fn unknown_failures_are_bounded_not_dumped() {
+        let deep = anyhow!("outer context").context("middle").context("inner");
+        let got = humanize_pipeline_error(&deep);
+        assert!(got.len() <= 100, "{got:?}");
+        assert!(
+            !got.contains(':'),
+            "no raw chain separators in the one-liner: {got:?}"
+        );
+    }
 }
