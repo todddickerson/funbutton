@@ -48,6 +48,15 @@ Ran the full gate set in the loop worktree (vendor/target/node_modules CoW-clone
 **Next:** P3 — Confucius4-R2T2 experimental opt-in STT. Research verdicts in hand: **sidecar python** (mlx-audio-swift supports Qwen3-ASR but has NO hotword input and is untested on these weights — hotwords are the point of this feature; patching+validating Swift is >1 day). License pinned: NetEase Youdao Model Use License Agreement (11,071 B, sha256 4d9321cd…, canonical raw URL in netease-youdao/Confucius4-R2T2@master) + required derivative notice text from the HF card. Proven spike venv pins: python 3.12.11, mlx-audio 0.5.5, mlx 0.32.2, transformers 5.17.0.
 **Blocked:** none.
 
+## 2026-10-11 14:35 — P4d shipped: pipeline stage events (PR #21)
+
+**PR #21 `feat/pipeline-stage-events`** — gauntlet #7 [C] + the tray one-phase-lag [D]: `pipeline::run` now reports Transcribing/Cleaning through an `on_status` callback the moment they start; the hotkey loop wires it to `emit_status` + `tray::sync`. The pill's 110 ms poll is now redundant but deliberately left (removing it is a visual-QA change). Gates: 80/0/7 · clippy · fmt; live selftest regression green on the rebuilt binary.
+
+Open PR stack so far: #15 (DMG-upgrade proof) · #16 (bench) · #17 (R2T2, stacked on #15) · #18 (backslash+STT-prompt tests) · #19 (settings-changed listener) · #20 (re-entrancy gate) · #21 (stage events). All green on local gates; waiting on the sweep.
+
+**Next:** P4e — history per-entry delete + instant wipe-all (the privacy story's missing affordance); then words_today midnight rollover in the tray.
+**Blocked:** none.
+
 ## 2026-10-11 13:55 — P4 a/b/c shipped: three gauntlet fixes, PRs #18 #19 #20
 
 - **PR #18 `fix/code-prompt-backslash`** — gauntlet [E]: both prompt copies (desktop CODE_PROMPT + worker) double-escaped, literally teaching `'backslash' → \\`; models emitted two backslashes. Fixed both (parity kept), regression test pins the single-char mapping + that `'newline' → \n` stays intentionally literal. Also added the missing `build_stt_prompt` test (user terms lead + outrank built-ins under the 600-char budget, truncation never splits a term). Gates: 82/0/7 · clippy · worker tsc.
