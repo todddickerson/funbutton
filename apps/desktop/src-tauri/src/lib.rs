@@ -420,21 +420,43 @@ fn sync_r2t2(app: &AppHandle, state: &AppStateHandle) {
     let state = Arc::clone(state);
     let model_dir = models::model_path(&entry);
     tauri::async_runtime::spawn(async move {
+        // The flag MUST clear however this task ends (early return, spawn
+        // failure, panic) — a stuck flag would silently refuse every future
+        // start. On drop it also re-runs sync_r2t2 once: a re-pick that
+        // arrived while the flag was up (and was therefore bounced) gets
+        // served instead of dropped (critic finding #5).
+        struct StartingGuard(AppStateHandle, AppHandle);
+        impl Drop for StartingGuard {
+            fn drop(&mut self) {
+                self.0.r2t2_starting.store(false, Ordering::SeqCst);
+                // Retry ONLY the bounced-pick case (no handle, no recorded
+                // failure, pick active again). A spawn/provision failure sets
+                // r2t2_error and must NOT retry — that would hot-loop.
+                if self.0.r2t2.lock().is_none()
+                    && self.0.r2t2_error.lock().is_none()
+                    && active_r2t2_entry(&self.0).is_some()
+                    && !self.0.shutting_down.load(Ordering::SeqCst)
+                {
+                    log::info!("r2t2: pick is (still) active after a bounced start — retrying");
+                    sync_r2t2(&self.1, &self.0);
+                }
+                let _ = self.1.emit("funbutton:models-changed", ());
+                tray::sync(&self.1);
+            }
+        }
+        let _guard = StartingGuard(Arc::clone(&state), app.clone());
+
         if !r2t2::runtime_ready() {
             if let Err(e) = r2t2::provision(&app).await {
                 log::warn!("r2t2 runtime provisioning failed: {e:#}");
                 *state.r2t2_error.lock() = Some(format!("runtime setup failed: {e}"));
-                state.r2t2_starting.store(false, Ordering::SeqCst);
-                let _ = app.emit("funbutton:models-changed", ());
-                tray::sync(&app);
                 return;
             }
         }
-        // Pick moved away during provisioning? Don't even spawn.
+        // Pick moved away during provisioning? Don't even spawn. (The guard's
+        // drop re-syncs if it moved back.)
         if !should_store_r2t2(&state) {
             log::info!("r2t2 sidecar not started: pick changed during provisioning");
-            state.r2t2_starting.store(false, Ordering::SeqCst);
-            let _ = app.emit("funbutton:models-changed", ());
             return;
         }
         match r2t2::R2t2Server::spawn(model_dir).await {
@@ -450,20 +472,25 @@ fn sync_r2t2(app: &AppHandle, state: &AppStateHandle) {
                 *state.r2t2_error.lock() = Some(e.to_string());
             }
         }
-        state.r2t2_starting.store(false, Ordering::SeqCst);
-        let _ = app.emit("funbutton:models-changed", ());
-        tray::sync(&app);
     });
 }
 
 /// (Re)load the on-device STT engines for the active model: the embedded
 /// whisper (active builtin pick, or the installed fallback when the sidecar
-/// model is active) and the R2T2 sidecar (spawned/killed to match the pick).
+/// model is active) and the R2T2 sidecar. The sidecar is RESTARTED, not
+/// reused: `engine_state` can't tell a live child from a crashed/hung one
+/// (the handle survives either way), so reload is the recovery path — a dead
+/// sidecar after "restart engines" or a model switch comes back fresh
+/// (critic finding #4).
 fn reload_stt(app: &AppHandle, state: &AppStateHandle) {
     if let Some(path) = resolve_whisper_path(state) {
         state.stt.init(app, path);
     } else {
         state.stt.unload();
+    }
+    if let Some(srv) = state.r2t2.lock().take() {
+        log::info!("r2t2 sidecar stopped for reload");
+        srv.kill();
     }
     sync_r2t2(app, state);
     tray::sync(app);
@@ -621,11 +648,31 @@ fn models_delete(
     let freed = models::delete(&entry).map_err(|e| e.to_string())?;
     if active_id(&state, entry.role).as_deref() == Some(entry.id.as_str()) {
         match entry.role {
-            Role::Stt => state.stt.unload(),
+            // Deleting the ACTIVE STT pick must re-resolve engines, not just
+            // unload whisper: with the R2T2 pick this kills the sidecar (its
+            // model is gone — critic finding: it kept transcribing on the
+            // deleted model) and brings whisper back up as the live engine.
+            Role::Stt => reload_stt(&app, state.inner()),
             Role::Cleanup => {
                 if let Some(srv) = state.embedded.lock().take() {
                     srv.kill();
                 }
+            }
+        }
+    }
+    // The sidecar model owns the python runtime — deleting the model also
+    // reclaims the ~480 MB runtime dir (reprovisioning is automatic on a
+    // future re-download + activate).
+    if entry.runtime == models::ModelRuntime::MlxR2t2 {
+        if let Some(srv) = state.r2t2.lock().take() {
+            srv.kill();
+        }
+        let rt_dir = r2t2::runtime_dir();
+        if rt_dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&rt_dir) {
+                log::warn!("could not remove r2t2 runtime dir: {e}");
+            } else {
+                log::info!("removed r2t2 runtime dir ({})", rt_dir.display());
             }
         }
     }
