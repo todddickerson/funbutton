@@ -334,27 +334,6 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
             }
             sync(app);
         }
-        id @ ("mode_auto" | "mode_code" | "mode_email" | "mode_slack" | "mode_raw") => {
-            let mode = match id {
-                "mode_code" => ModeOverride::Code,
-                "mode_terminal" => ModeOverride::Terminal,
-                "mode_email" => ModeOverride::Email,
-                "mode_slack" => ModeOverride::Slack,
-                "mode_raw" => ModeOverride::Raw,
-                _ => ModeOverride::Auto,
-            };
-            let st = app.state::<AppStateHandle>();
-            {
-                let mut s = st.settings.lock();
-                s.mode_override = mode;
-                if let Err(e) = crate::persist(&s) {
-                    log::warn!("persist after tray mode switch failed: {e:#}");
-                }
-            }
-            // Let an open Settings window pick up the change.
-            let _ = app.emit("funbutton:settings-changed", ());
-            sync(app);
-        }
         "quit" => {
             // Same ordered teardown as the AppleEvent-quit path. `app.exit(0)`
             // then unwinds the event loop and fires RunEvent::Exit, which calls
@@ -364,8 +343,40 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
             crate::shutdown(app);
             app.exit(0);
         }
-        _ => {}
+        other => {
+            // Mode quick-switch items resolve through ONE mapping (below) —
+            // the previous hand-written match-arm pattern silently dropped
+            // "mode_terminal" (dead menu item) because the pattern and the
+            // inner id→mode table had drifted.
+            if let Some(mode) = mode_for_menu_id(other) {
+                let st = app.state::<AppStateHandle>();
+                {
+                    let mut s = st.settings.lock();
+                    s.mode_override = mode;
+                    if let Err(e) = crate::persist(&s) {
+                        log::warn!("persist after tray mode switch failed: {e:#}");
+                    }
+                }
+                // Let an open Settings window pick up the change.
+                let _ = app.emit("funbutton:settings-changed", ());
+                sync(app);
+            }
+        }
     }
+}
+
+/// Tray menu id → mode override. The single source the menu handler consults,
+/// so the handler can never again drop an id the menu offers.
+fn mode_for_menu_id(id: &str) -> Option<ModeOverride> {
+    Some(match id {
+        "mode_auto" => ModeOverride::Auto,
+        "mode_code" => ModeOverride::Code,
+        "mode_terminal" => ModeOverride::Terminal,
+        "mode_email" => ModeOverride::Email,
+        "mode_slack" => ModeOverride::Slack,
+        "mode_raw" => ModeOverride::Raw,
+        _ => return None,
+    })
 }
 
 fn show_window(app: &AppHandle, label: &str) {
@@ -489,7 +500,7 @@ fn words_today_for(count: u64, date: &str, today: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::words_today_for;
+    use super::*;
 
     #[test]
     fn words_counter_rolls_over_at_midnight() {
@@ -498,5 +509,23 @@ mod tests {
         assert_eq!(words_today_for(1234, "2026-10-11", "2026-10-12"), 0);
         // Never-dictated fresh install (empty date) reads 0 too.
         assert_eq!(words_today_for(0, "", "2026-10-12"), 0);
+    }
+
+    #[test]
+    fn every_mode_menu_item_resolves() {
+        // All six ids the menu builder offers must map — "Terminal" was a
+        // dead menu item when the handler's pattern dropped its id.
+        for (id, want) in [
+            ("mode_auto", ModeOverride::Auto),
+            ("mode_code", ModeOverride::Code),
+            ("mode_terminal", ModeOverride::Terminal),
+            ("mode_email", ModeOverride::Email),
+            ("mode_slack", ModeOverride::Slack),
+            ("mode_raw", ModeOverride::Raw),
+        ] {
+            assert_eq!(mode_for_menu_id(id), Some(want), "{id}");
+        }
+        assert_eq!(mode_for_menu_id("quit"), None);
+        assert_eq!(mode_for_menu_id("mode_bogus"), None);
     }
 }
