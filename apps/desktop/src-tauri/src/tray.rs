@@ -140,7 +140,11 @@ fn snapshot(app: &AppHandle) -> Snapshot {
         (
             s.mode_override,
             s.hotkey_kind,
-            s.words_today,
+            // Midnight rollover: the stored counter belongs to
+            // words_today_date — a menu opened on a new day must show 0, not
+            // yesterday's count. Display-only; the stored value resets on the
+            // next dictation (lib.rs), keeping this read path side-effect-free.
+            words_today_for(s.words_today, &s.words_today_date, &crate::chrono_today()),
             !s.groq_api_key.trim().is_empty() || !s.license_jwt.trim().is_empty(),
         )
     };
@@ -471,4 +475,28 @@ fn fmt_thousands(n: u64) -> String {
         out.push(c);
     }
     out
+}
+
+/// Words-today display value: the stored count only belongs to `date`; any
+/// other day reads 0 until the next dictation resets the store.
+fn words_today_for(count: u64, date: &str, today: &str) -> u64 {
+    if date == today {
+        count
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::words_today_for;
+
+    #[test]
+    fn words_counter_rolls_over_at_midnight() {
+        assert_eq!(words_today_for(1234, "2026-10-11", "2026-10-11"), 1234);
+        // Menu opened past midnight, before the first dictation of the day.
+        assert_eq!(words_today_for(1234, "2026-10-11", "2026-10-12"), 0);
+        // Never-dictated fresh install (empty date) reads 0 too.
+        assert_eq!(words_today_for(0, "", "2026-10-12"), 0);
+    }
 }
