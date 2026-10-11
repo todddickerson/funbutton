@@ -798,6 +798,20 @@ function App() {
             <div className="fb-label-row">
               <label className="fb-label">Dictionary</label>
               <span className="fb-label-aux">{settings.dictionary.length === 0 ? "empty" : `${settings.dictionary.length} term${settings.dictionary.length === 1 ? "" : "s"}`}</span>
+              {settings.dictionary.length > 0 && (
+                <button
+                  className="fb-linkbtn"
+                  title="export: copy every term as a comma-separated list"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(settings.dictionary.join(", "));
+                      pushToast("ok", `copied ${settings.dictionary.length} terms`);
+                    } catch {
+                      pushToast("warn", "copy failed");
+                    }
+                  }}
+                >copy all</button>
+              )}
             </div>
             <DictionaryEditor
               words={settings.dictionary}
@@ -805,7 +819,8 @@ function App() {
             />
             <div className="fb-hint">
               brand names, jargon, project names. cleanup keeps these spellings even when
-              whisper hears them slightly off. enter or comma to add.
+              whisper hears them slightly off. enter or comma to add — paste a whole
+              comma-separated list to import; copy all exports it.
             </div>
           </div>
 
