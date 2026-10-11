@@ -156,6 +156,39 @@ output; identical results from the spike venv and the app runtime.
   70 MB + venv 367 MB; wheel cache cleaned post-install). Nothing in
   `~/.local` / `~/.cache`.
 
+## Review-pass fixes (same branch, post-initial-QA)
+
+- **Pick flip-flop race closed.** `sync_r2t2` previously only checked the
+  *stored* handle, so R2T2→whisper→R2T2 during the minutes-long first
+  provisioning could race two `uv` runs over the runtime dir, and an
+  abandoned pick could leave a 1.5 GB model resident until quit. Now: a
+  `r2t2_starting` flag admits one provision-and-spawn task at a time, the
+  task re-checks the pick after provisioning, and `store_or_reap_r2t2`
+  decides under the `r2t2` lock (`should_store_r2t2`: quit or pick-change →
+  reap, never store). Pinned by `r2t2_store_decision_follows_the_live_pick`
+  (sparse files at the manifest's exact pinned sizes, so `is_installed` is
+  real without 1.6 GB).
+- **Window-title hotwords actually arrive now.** `context_now()` at STT time
+  nearly always missed the AX read (app name lands in µs, AX in ms) — title
+  tokens were silently absent from the hotword list. New
+  `DetectHandle::wait_context_up_to(250 ms)`, paid **only** on the
+  R2T2-active + capture-on path; capture-off returns Disconnected-instantly
+  (pinned by `wait_context_returns_fast_when_capture_is_off`), and the slow-AX
+  pickup + cleanup-time caching is pinned by
+  `wait_context_picks_up_a_slow_ax_read`. Debug log carries counts only.
+- **Privacy hardening:** sidecar error bodies truncated to 160 chars before
+  they reach the app log (a python exception string could embed hotword
+  text); scratch WAVs moved from system tmp into `r2t2-runtime/tmp/`
+  (stale ones swept at sidecar start — verified 0 leftovers after the live
+  test).
+- **UX:** Settings → Models now toasts each runtime-setup stage
+  (`funbutton:r2t2-runtime`), so the one-time provisioning isn't a silent
+  "starting". Desktop `tsc` + `vite build` clean.
+
+Post-fix gates: `cargo test --release --lib` → **88 passed / 0 failed /
+9 ignored**; `r2t2_sidecar_live` re-run green with the new scratch-dir
+handling; fmt + clippy `-D warnings` rc 0.
+
 ## Not verified (honest gaps)
 
 - Real-mic dictation with R2T2 active (same human TCC gate as every prior

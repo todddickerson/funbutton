@@ -106,7 +106,25 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
         }
     };
     let hotwords = if r2t2_srv.is_some() {
-        build_hotwords(&dictionary, detect.context_now().as_ref())
+        // The AX title read lands milliseconds after the app name, so a
+        // non-blocking read here would miss it nearly every time. Give it a
+        // short bounded wait — only on the R2T2 + capture-on path, so no
+        // other dictation pays it. Capture-off returns instantly (channel
+        // already closed). The result is cached for the cleanup-time read.
+        let ctx = if capture_context {
+            detect.wait_context_up_to(std::time::Duration::from_millis(250))
+        } else {
+            None
+        };
+        let hw = build_hotwords(&dictionary, ctx.as_ref());
+        // Counts only — hotword CONTENT is never logged.
+        log::debug!(
+            "r2t2 hotwords: dict={} title_context={} total={}",
+            dictionary.len(),
+            ctx.as_ref().and_then(|c| c.window_title.as_ref()).is_some(),
+            hw.len()
+        );
+        hw
     } else {
         Vec::new()
     };

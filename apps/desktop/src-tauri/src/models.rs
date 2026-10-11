@@ -884,15 +884,19 @@ pub fn migrate_from_bundle(app: &AppHandle, manifest: &Manifest) -> Vec<String> 
     migrated
 }
 
+/// Serializes tests (across modules) that mutate the process-global
+/// FUNBUTTON_MODELS_DIR override — cargo runs tests on parallel threads.
+/// parking_lot: no poisoning on a failed assert.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use once_cell::sync::Lazy;
+    pub static ENV_LOCK: Lazy<parking_lot::Mutex<()>> = Lazy::new(|| parking_lot::Mutex::new(()));
+}
+
 #[cfg(test)]
 mod tests {
+    use super::test_support::ENV_LOCK;
     use super::*;
-
-    /// Serializes tests that mutate the process-global FUNBUTTON_MODELS_DIR
-    /// override (cargo runs tests on parallel threads). parking_lot — no
-    /// poisoning on a failed assert.
-    static ENV_LOCK: Lazy<parking_lot::Mutex<()>> = Lazy::new(|| parking_lot::Mutex::new(()));
-    use once_cell::sync::Lazy;
 
     #[test]
     fn baked_manifest_is_valid_and_has_defaults() {
