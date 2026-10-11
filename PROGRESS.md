@@ -48,6 +48,25 @@ Ran the full gate set in the loop worktree (vendor/target/node_modules CoW-clone
 **Next:** P3 — Confucius4-R2T2 experimental opt-in STT. Research verdicts in hand: **sidecar python** (mlx-audio-swift supports Qwen3-ASR but has NO hotword input and is untested on these weights — hotwords are the point of this feature; patching+validating Swift is >1 day). License pinned: NetEase Youdao Model Use License Agreement (11,071 B, sha256 4d9321cd…, canonical raw URL in netease-youdao/Confucius4-R2T2@master) + required derivative notice text from the HF card. Proven spike venv pins: python 3.12.11, mlx-audio 0.5.5, mlx 0.32.2, transformers 5.17.0.
 **Blocked:** none.
 
+## 2026-10-11 18:45 — Adversarial review cycle COMPLETE: 19 findings, every confirmed bug fixed, union re-verified live
+
+Ran a blind critic over the whole 15-PR union ("assume it's broken"). It returned 19 findings — 4 merge-blockers among them — and every confirmed one is now fixed on the owning branch (commits + PR comments on #17 #19 #20 #21 #24 #27 #28):
+
+**Merge blockers fixed:**
+1. **Hotkey gate could brick dictation** — a pipeline panic left status stuck mid-run and the new gate then refused every hold until relaunch. Now a Drop guard forces Error on abnormal task exit, the Transcribing flip is synchronous (kills the queued-double-Up race too), and whisper got a 60 s hard ceiling so a wedged ggml run degrades instead of hanging forever (#20, #28).
+2. **R2T2 setup was unretryable** — `uv venv` refuses an existing venv, so one failed/interrupted first setup bricked every retry until a hand-delete. Reproduced against pinned uv 0.13.0; fixed with `--clear` (+ uv children now in the PID reap registry so quit mid-provision can't orphan an installer against the next launch) (#17).
+3. **Deleting the active R2T2 model kept dictating on it** — delete unloaded whisper (the fallback!) and left the sidecar serving the deleted weights. Now delete reloads engines (sidecar killed, whisper back) and reclaims the ~480 MB runtime dir (#17).
+4. **A crashed/hung sidecar was unrecoverable** — restart-engines reused the dead handle and the engine board said "ready". `reload_stt` now restarts the sidecar; the startup health poll also fails fast when the child already exited instead of reading "starting" for 240 s (#17).
+
+**Also fixed:** bounced-pick retry + panic-proof `r2t2_starting` guard; humanizer reordered so key/network signals beat the "no backend" umbrella the pipeline wraps everything in (its tests had asserted error shapes the pipeline never produces — rewritten against real ones); tray STT line names r2t2 vs whisper and stops claiming "no fallback"; groq key check no longer calls offline "rejected" + stale responses dropped; settings-changed merges only mode_override (no wiping mid-typed text); hotword-bearing sidecar error bodies redacted; pre-STT context wait skipped when tokens are unusable.
+
+**Accepted/known (documented, not fixed):** whisper prompt-echo risk on near-silence (pre-existing with the dev dictionary; title tokens widen it marginally), `min_app_version` still decorative, 21's pill poll redundancy, embedded_llm has the same no-child-exit-check gap (pre-existing).
+
+**Re-verified after all fixes:** 15-branch matrix zero conflicts (one new stack declared: #21 on #20) · union gates 98/0/10 · clippy · fmt · desktop+worker TS · `uv --clear` retry proven live · live sidecar hotword test green · **union release binary selftest green on BOTH paths** (whisper default, and R2T2-active → `transcribed via r2t2`). Settings restored; no stray processes.
+
+**Next:** hold for the sweep; periodic PR checks; FINAL section + ship block execution if the sweep lands before the 24h mark (11:58 EDT tomorrow).
+**Blocked:** v0.1.9 cut on the sweep.
+
 ## 2026-10-11 18:35 — Dictionary export shipped (PR #29) · 15-branch union green · adversarial review next
 
 **PR #29 `feat/dictionary-import-export`** — copy-all export + the paste-to-import path made explicit in the hint. 15 PRs open (#15–#29); full merge matrix still zero-conflict; union diff = 25 files / +2822 −117, gates all green (98/0/10 · clippy · fmt · desktop+worker ts).
