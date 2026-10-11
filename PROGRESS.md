@@ -48,6 +48,17 @@ Ran the full gate set in the loop worktree (vendor/target/node_modules CoW-clone
 **Next:** P3 — Confucius4-R2T2 experimental opt-in STT. Research verdicts in hand: **sidecar python** (mlx-audio-swift supports Qwen3-ASR but has NO hotword input and is untested on these weights — hotwords are the point of this feature; patching+validating Swift is >1 day). License pinned: NetEase Youdao Model Use License Agreement (11,071 B, sha256 4d9321cd…, canonical raw URL in netease-youdao/Confucius4-R2T2@master) + required derivative notice text from the HF card. Proven spike venv pins: python 3.12.11, mlx-audio 0.5.5, mlx 0.32.2, transformers 5.17.0.
 **Blocked:** none.
 
+## 2026-10-11 13:30 — P3 review pass: race + inert-hotwords fixed on PR #17
+
+Advisor review caught two real defects in the fresh R2T2 work; both fixed, re-verified live, pushed to #17 (comment on the PR):
+1. **Pick flip-flop race** — switching R2T2→whisper→R2T2 during the minutes-long first provisioning could race two `uv` runs over the runtime dir, and an abandoned pick could leave a 1.5 GB model resident until quit. Now one starter at a time (`r2t2_starting`), post-provision pick re-check, reap-not-store under the `r2t2` lock; pinned by a sparse-file unit test.
+2. **Window-title hotwords were inert** — the AX context lands ms after the app name, so the non-blocking read at STT time nearly always missed it; only dictionary terms ever reached the sidecar. New bounded `wait_context_up_to(250 ms)` paid only on the R2T2+capture-on path (capture-off returns instantly; both timing-tested).
+
+Plus: sidecar error bodies truncated before logging (a python exception could embed hotword text), scratch WAVs moved into `r2t2-runtime/tmp` with a stale sweep, and Settings now toasts each one-time runtime-setup stage. Gates after: 88/0/9 · live sidecar re-run green · fmt/clippy rc 0 · desktop tsc + vite build clean.
+
+**Next:** P4 gauntlet leftovers, each its own PR: (a) CODE_PROMPT doubled-backslash fix + the missing build_stt_prompt ordering/truncation test; (b) funbutton:settings-changed listener in App.tsx (tray mode switch silently clobbered by a later Settings save); (c) hotkey re-entrancy gate (#8).
+**Blocked:** none.
+
 ## 2026-10-11 13:05 — P3 DONE: Confucius4-R2T2 experimental STT shipped (PR #17), fully QA'd live
 
 **PR #17 (`feat/r2t2-experimental-stt`, stacked on #15 — merge #15 first):** the model picker gains "Experimental — R2T2 (hotword-aware)" (1.5 GB). Manifest schema v2 (multi-file entries + runtime field; old apps safely reject the v2 live manifest via the existing schema gate). Self-contained runtime under App Support (pinned uv 0.13.0 → uv-managed CPython 3.12 only-managed → spike-proven pinned wheels; 466 MB, cache cleaned). Sidecar lifecycle clones the llama-server pattern (PID registry + SPAWN_GATE + shutdown reap). Pipeline: R2T2 leads only when picked AND up; whisper stays warm as fallback. Hotwords = user dictionary + AX window-title tokens, capped 24, never logged. NetEase license downloaded beside the weights at a pinned sha; §4.1(a) derivative notice written at install.
