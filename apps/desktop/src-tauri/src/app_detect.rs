@@ -97,6 +97,28 @@ impl DetectHandle {
         }
     }
 
+    /// Test seam mirroring the real spawn's timing shape: the app name is
+    /// sent immediately, then the (slower) context producer runs on the same
+    /// thread — exactly how `spawn` orders the native detect and the AX read.
+    #[cfg(test)]
+    fn spawn_with_context<C>(app: FrontApp, context: C) -> Self
+    where
+        C: FnOnce() -> crate::app_context::FocusContext + Send + 'static,
+    {
+        let (app_tx, app_rx) = mpsc::channel();
+        let (ctx_tx, ctx_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = app_tx.send(app);
+            let _ = ctx_tx.send(context());
+        });
+        DetectHandle {
+            app_rx,
+            app_cached: None,
+            ctx_rx,
+            ctx_cached: None,
+        }
+    }
+
     /// Wait for the app-detection result, but never longer than `timeout`.
     /// Returns `FrontApp::Unknown` on timeout (the result may still be
     /// picked up later via `now_or_unknown`).
@@ -122,6 +144,24 @@ impl DetectHandle {
     pub fn context_now(&mut self) -> Option<crate::app_context::FocusContext> {
         if self.ctx_cached.is_none() {
             self.ctx_cached = self.ctx_rx.try_recv().ok();
+        }
+        self.ctx_cached.clone().filter(|c| !c.is_empty())
+    }
+
+    /// Wait for the AX focus context, but never longer than `timeout`. Used by
+    /// the R2T2 hotword builder, which runs *before* STT — `context_now` alone
+    /// would nearly always miss the AX read (the app name arrives in µs, the
+    /// AX round-trips in ms). Cheap in the no-context cases: with capture off
+    /// the channel is already closed (recv returns Disconnected immediately),
+    /// and an ungranted/empty AX read sends an empty context fast, filtered to
+    /// `None` here. The result is cached, so the later cleanup-time
+    /// `context_now` sees the same value.
+    pub fn wait_context_up_to(
+        &mut self,
+        timeout: Duration,
+    ) -> Option<crate::app_context::FocusContext> {
+        if self.ctx_cached.is_none() {
+            self.ctx_cached = self.ctx_rx.recv_timeout(timeout).ok();
         }
         self.ctx_cached.clone().filter(|c| !c.is_empty())
     }
@@ -476,5 +516,45 @@ mod tests {
         let mut h = DetectHandle::spawn_with(|| FrontApp::Slack);
         assert_eq!(h.wait_up_to(Duration::from_secs(2)), FrontApp::Slack);
         assert!(h.context_now().is_none());
+    }
+
+    #[test]
+    fn wait_context_picks_up_a_slow_ax_read() {
+        // Mirrors production timing: the app name lands in µs, the AX context
+        // arrives ms later. `context_now` alone misses it; the bounded wait
+        // (used by the R2T2 hotword builder) must catch it — and the later
+        // cleanup-time `context_now` must see the same cached value.
+        let mut h = DetectHandle::spawn_with_context(FrontApp::Cursor, || {
+            std::thread::sleep(Duration::from_millis(80));
+            crate::app_context::FocusContext {
+                window_title: Some("auth_middleware.rs — funbutton".into()),
+                focused_role: None,
+                selected_text: None,
+            }
+        });
+        assert_eq!(h.wait_up_to(Duration::from_secs(2)), FrontApp::Cursor);
+        assert!(h.context_now().is_none(), "AX read still in flight");
+        let got = h.wait_context_up_to(Duration::from_secs(2));
+        assert_eq!(
+            got.and_then(|c| c.window_title),
+            Some("auth_middleware.rs — funbutton".to_string())
+        );
+        assert!(h.context_now().is_some(), "cached for cleanup time");
+    }
+
+    #[test]
+    fn wait_context_returns_fast_when_capture_is_off() {
+        // Capture-off closes the context channel as soon as the detect thread
+        // ends — the bounded wait must come back Disconnected-fast, not burn
+        // its full timeout before every R2T2 dictation.
+        let mut h = DetectHandle::spawn_with(|| FrontApp::Slack);
+        assert_eq!(h.wait_up_to(Duration::from_secs(2)), FrontApp::Slack);
+        let started = std::time::Instant::now();
+        assert!(h.wait_context_up_to(Duration::from_secs(5)).is_none());
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "closed channel took {:?}",
+            started.elapsed()
+        );
     }
 }
