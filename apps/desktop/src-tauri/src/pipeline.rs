@@ -94,7 +94,12 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
     // lands ms after the app name, so give it a short bounded wait — only
     // when capture is on; capture-off returns instantly (channel closed).
     // The result is cached for the cleanup-time read below.
-    let title_ctx = if capture_context {
+    // Skip the wait entirely when the tokens could never be used anyway:
+    // a cloud-first STT preference without the cloud-context opt-in only
+    // consumes the prompt on the (rare) embedded fallback — not worth a
+    // pre-STT pause on every dictation (review finding #11).
+    let title_bias_useful = stt_backend == SttBackend::Local || context_to_cloud;
+    let title_ctx = if capture_context && title_bias_useful {
         detect.wait_context_up_to(std::time::Duration::from_millis(150))
     } else {
         None
@@ -180,12 +185,27 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
                 let stt = Arc::clone(&state.stt);
                 let wav_c = wav.clone();
                 let prompt = stt_prompt.clone();
-                let joined =
-                    tokio::task::spawn_blocking(move || stt.transcribe_wav(&wav_c, prompt)).await;
-                (
-                    "embedded-whisper",
-                    joined.unwrap_or_else(|e| Err(anyhow::anyhow!("stt task join: {e}"))),
+                // Hard ceiling on the C++ whisper call: a wedged ggml run
+                // must degrade to the fallback chain, never hang the
+                // pipeline forever (with the hotkey re-entrancy gate, a
+                // hung pipeline would refuse all future holds). 60s is
+                // ~20× the worst observed cold transcription on a long
+                // dictation; the orphaned blocking thread parks on the
+                // session mutex and is reaped at process exit.
+                let attempt = match tokio::time::timeout(
+                    std::time::Duration::from_secs(60),
+                    tokio::task::spawn_blocking(move || stt.transcribe_wav(&wav_c, prompt)),
                 )
+                .await
+                {
+                    Ok(joined) => {
+                        joined.unwrap_or_else(|e| Err(anyhow::anyhow!("stt task join: {e}")))
+                    }
+                    Err(_) => Err(anyhow::anyhow!(
+                        "whisper timed out after 60s — engine wedged, falling back"
+                    )),
+                };
+                ("embedded-whisper", attempt)
             }
             SttSource::Cloud => match &cloud {
                 Some(cli) => (
