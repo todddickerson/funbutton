@@ -48,6 +48,18 @@ Ran the full gate set in the loop worktree (vendor/target/node_modules CoW-clone
 **Next:** P3 — Confucius4-R2T2 experimental opt-in STT. Research verdicts in hand: **sidecar python** (mlx-audio-swift supports Qwen3-ASR but has NO hotword input and is untested on these weights — hotwords are the point of this feature; patching+validating Swift is >1 day). License pinned: NetEase Youdao Model Use License Agreement (11,071 B, sha256 4d9321cd…, canonical raw URL in netease-youdao/Confucius4-R2T2@master) + required derivative notice text from the HF card. Proven spike venv pins: python 3.12.11, mlx-audio 0.5.5, mlx 0.32.2, transformers 5.17.0.
 **Blocked:** none.
 
+## 2026-10-11 20:15 — Sweep is live: #15+#16 squash-merged; stacked branches rebased onto the new main
+
+Ea's sweep started (squash-merge, ascending). The squashes changed base SHAs, so the three branches carrying #15's original commit flipped CONFLICTING — all three rebased onto the squashed main, gates re-run, force-pushed, and back to MERGEABLE/CLEAN:
+- #17 clean rebase (git auto-skipped the already-applied #15 patch) — 88/0/10 · clippy · fmt.
+- #28 clean rebase (7 commits replayed) — pushed.
+- #27 rebuilt from fresh bases (#17-new + #20 + #21 merged, own two commits cherry-picked; the lib.rs EOF test-module and relocated-humanizer conflicts re-resolved; a stray fmt blank-line that would have failed fmt-on-tip caught and amended) — 91/0/10 · clippy · fmt.
+
+A background watcher polls every 90 s and exits the moment any PR flips CONFLICTING (or all are merged); the 30-min wakeup is the fallback. Current: **#15 #16 merged · 14 open · all MERGEABLE.** Expected churn as the sweep proceeds: #21 flips after #20 merges; #24 after #22; #25 after #23; #27 after each of #17/#20/#21; #28 after #17/#18.
+
+**Next:** rebase-on-flip until all 16 are on main, then the v0.1.9 ship block.
+**Blocked:** ship on the sweep's remaining merges.
+
 ## 2026-10-11 19:20 — Landing micro-fixes (PR #30) · 16/16 matrix green · entering sweep-hold
 
 **PR #30 `fix/landing-microfixes`** — nav download CTA at all scroll depths, mobile table swipe hint, "claims last checked 2026-08" footnote. tsc + next build + eslint clean; NOT deployed (human-gated per the rules).
