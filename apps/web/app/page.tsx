@@ -71,6 +71,12 @@ function Nav() {
             <GitHubMark className="w-4 h-4" />
             <span>source →</span>
           </a>
+          <a
+            href="/download"
+            className="rounded border border-red-500/60 px-2.5 py-1 text-red-400 hover:bg-red-500/10 transition"
+          >
+            download
+          </a>
         </div>
       </div>
     </nav>
@@ -425,6 +431,9 @@ function Comparison() {
         nobody wakes up thinking about terminals, commit messages, and coding agents.
       </p>
 
+      <p className="sm:hidden mb-2 font-mono text-[11px] text-neutral-500">
+        swipe the table sideways for the other three →
+      </p>
       <div className="overflow-x-auto rounded-lg border border-neutral-800">
         <table className="w-full min-w-[640px] text-sm border-collapse">
           <thead>
@@ -472,7 +481,8 @@ function Comparison() {
 
       <p className="mt-4 font-mono text-xs text-neutral-600 max-w-2xl leading-relaxed">
         Wispr Flow raised ~$334M and still can&apos;t work on a plane. We hold that against
-        them slightly less than the subscription.
+        them slightly less than the subscription.{" "}
+        <span className="text-neutral-700">Competitor claims last checked 2026-08.</span>
       </p>
     </section>
   );
