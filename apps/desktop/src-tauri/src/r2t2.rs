@@ -498,18 +498,22 @@ mod tests {
             let srv = R2t2Server::spawn(model_dir).await.expect("spawn sidecar");
             let bytes = std::fs::read(&wav).expect("fixture wav");
             let plain = srv.transcribe(bytes.clone(), &[]).await.expect("plain");
+            // Decoding is greedy (temperature 0) but the hotword list is
+            // folded into the system prompt, so ORDER changes the output —
+            // this is the spike's proven list/order (bench-stt.py's default).
             let hot = srv
                 .transcribe(
                     bytes,
                     &[
-                        "kubectl".into(),
-                        "auth_middleware.rs".into(),
                         "ClickFunnels".into(),
+                        "auth_middleware.rs".into(),
+                        "kubectl".into(),
                     ],
                 )
                 .await
                 .expect("hotwords");
             eprintln!("PLAIN: {plain}\nHOT:   {hot}");
+            assert_ne!(plain, hot, "hotwords must bias the output");
             assert!(
                 hot.to_lowercase().contains("kubectl"),
                 "hotword biasing should produce 'kubectl', got: {hot}"
