@@ -254,6 +254,17 @@ function App() {
       setSttStatus("failed");
       console.warn("embedded STT failed:", e.payload);
     });
+    // Tray quick-switches (mode) persist settings behind this window's
+    // back. Without re-fetching, an open Settings window keeps the stale
+    // snapshot and its next Save silently clobbers the tray's choice
+    // (save_settings replaces the whole Settings struct). Merge ONLY the
+    // field the tray changes — replacing the whole object would wipe text
+    // a user is mid-typing in the key/dictionary inputs.
+    const unSC = listen("funbutton:settings-changed", () => {
+      invoke<Settings>("get_settings").then((fresh) => {
+        setSettings((prev) => (prev ? { ...prev, mode_override: fresh.mode_override } : fresh));
+      });
+    });
     const unL = listen("funbutton:license-activated", () => {
       invoke<Settings>("get_settings").then((s) => {
         setSettings(s);
@@ -280,6 +291,7 @@ function App() {
       unEmbFail.then((u) => u());
       unSttReady.then((u) => u());
       unSttFail.then((u) => u());
+      unSC.then((u) => u());
       window.removeEventListener("focus", onFocus);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
