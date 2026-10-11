@@ -108,6 +108,22 @@ export function systemPrompt(mode: Mode): string {
   }
 }
 
+// Built-in developer vocabulary block — mirrors the DEV VOCABULARY section
+// pipeline.rs appends to the on-device code/terminal prompt, so premium cloud
+// output matches the free on-device path. The terms come from the desktop
+// app's Rust `DEV_DICTIONARY` (single source of truth); the worker never keeps
+// its own copy, which would silently drift.
+export function withDevVocabulary(prompt: string, dictionary: string[] | undefined): string {
+  if (!dictionary || dictionary.length === 0) return prompt;
+  const terms = dictionary.map((s) => s.trim()).filter((s) => s.length > 0);
+  if (terms.length === 0) return prompt;
+  return (
+    prompt +
+    '\n\nDEV VOCABULARY (normalize to these exact spellings and casings when the user says them): ' +
+    terms.join(', ')
+  );
+}
+
 export function withDictionary(prompt: string, dictionary: string[] | undefined): string {
   if (!dictionary || dictionary.length === 0) return prompt;
   const lines = dictionary
@@ -117,7 +133,7 @@ export function withDictionary(prompt: string, dictionary: string[] | undefined)
   if (lines.length === 0) return prompt;
   return (
     prompt +
-    '\n\nUSER DICTIONARY (preserve these names and spellings exactly when they appear, even if Whisper transcribed them slightly differently):\n' +
+    '\n\nUSER DICTIONARY (preserve these names and spellings exactly when they appear, even if the transcriber heard them slightly differently — these outrank the dev vocabulary):\n' +
     lines.join('\n')
   );
 }

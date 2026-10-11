@@ -2,6 +2,24 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-09-15 09:52 — Cloud dev-vocab parity: premium path stops being worse than free (branch `feat-cloud-dev-vocab-parity`, PR open)
+
+**Fixes GAUNTLET finding [E]: the premium cloud path delivered a *weaker* dev experience than free offline.** Two gaps closed — the worker's cleanup `CODE_PROMPT` had no `DEV_DICTIONARY`, and the cloud STT call (`cloud.rs::transcribe`) sent no vocabulary-bias prompt. So a paying user's "git/kubectl/pnpm/Groq" transcribed and cleaned *worse* than a free on-device user's. Now both cloud legs get the same dev bias as the on-device/BYOK paths.
+
+**The design decision that mattered (avoiding the named risk — two drifting copies of `DEV_DICTIONARY`):** the Rust `DEV_DICTIONARY` / `DEV_DICTIONARY_STT` in `cleanup.rs` stay the **single source of truth**. The worker keeps **no copy** — the desktop *sends* the terms it already builds. So the worker became a pure executor of what the client passes; there is no second list in TypeScript to fall out of sync.
+
+**Shipped:**
+- **STT bias (the "STT change"):** `cloud.rs::transcribe` now sends the `build_stt_prompt` string (user dict + curated dev STT terms, already budget-capped at ~600 chars) to the worker. The body is raw audio, so it rides an `X-Funbutton-Stt-Prompt` header, **percent-encoded** (tiny dependency-free encoder, unit-tested to round-trip through `decodeURIComponent`, incl. non-ASCII). The worker's `/v1/transcribe` decodes it defensively (malformed → drop bias, still transcribe; capped) and forwards it to Groq Whisper's **`prompt`** field — the same field the BYOK path uses (`groq.rs:67`), confirmed by reading the handler, not guessed.
+- **Cleanup parity:** desktop sends `dev_dictionary` (from `DEV_DICTIONARY`) on cloud cleanup **only in dev mode**; the worker injects a "DEV VOCABULARY" block ahead of the user dictionary, mirroring `pipeline.rs` wording exactly (`withDevVocabulary` in `prompts.ts`; user-dict block wording re-synced to the desktop's, per the file's "keep in sync" contract). Terminal still demotes to `code` on the cloud path (unchanged — adding a worker `terminal` mode was out of scope).
+- **Docs:** `WORKER-SPEC.md` `/v1/transcribe` (new header) and `/v1/cleanup` (`dev_dictionary` field) contracts updated.
+
+**Gates (all green):**
+- `apps/worker` `tsc --noEmit` clean.
+- Rust `cargo fmt --check` clean; `cargo clippy --release --all-targets -- -D warnings` exit 0; `cargo test --release --lib` = 80 passed / 0 failed / 7 ignored, including 2 new `cloud::tests` for the header encoder.
+- macOS-26 crash-guard: no layout/TIS APIs touched (hotkey/injection code untouched).
+
+**Not done (yours):** review the PR. **Worker NOT deployed** to prod — preview/review only, per instructions. No release cut, no Telegram/Slack. When the worker is deployed, cloud dictation immediately gets the dev bias (client already sends it; old worker ignores the extra header/field harmlessly, so it's forward/backward compatible).
+
 ## 2026-08-19 14:10 — Agent install path: copy-paste prompt + machine-readable contract (branch `feat-agent-install`, PR open)
 
 **The piece you asked for on 2026-08-17 ("give an 'agent prompt' as well for claude/openclaw/hermes/etc easy install via agents") that PR #11 didn't ship. Now a user living in Claude Code / OpenClaw / Cursor / Codex / Hermes can paste one block and have their agent install and verify FunButton, then hand the three macOS permission grants back to them — because no agent can grant TCC permissions and the doc says so, plainly, instead of faking it. Proved the prompt works by following it verbatim on this Mac.**

@@ -33,6 +33,10 @@ export interface CleanupRequest {
   transcript: string;
   mode?: Mode;
   dictionary?: string[];
+  // Built-in developer vocabulary from the desktop app's Rust `DEV_DICTIONARY`
+  // (sent only in code mode). Kept on the client side as the single source of
+  // truth so it never drifts from a second copy in the worker.
+  dev_dictionary?: string[];
 }
 
 export interface UsagePerModel {

@@ -75,8 +75,16 @@ Audio → text via Groq Whisper Turbo. Always uses Groq fast tier (transcription
 ```
 Authorization: Bearer <jwt>
 Content-Type: audio/wav | audio/flac | audio/mp3
+X-Funbutton-Stt-Prompt: <percent-encoded vocabulary bias>   (optional)
 Body: raw audio bytes (≤25 MB, ≤60 s)
 ```
+`X-Funbutton-Stt-Prompt` is the whisper initial-prompt vocabulary bias (user
+dictionary + built-in dev terms) built client-side by the desktop app's
+`build_stt_prompt`. It is percent-encoded (recover with `decodeURIComponent`)
+because the body is raw audio, and forwarded to Groq Whisper's `prompt` field —
+so the premium path gets the same dev-term accuracy as the free BYOK/on-device
+paths. Omitted → no bias applied.
+
 **Response:** `{ text: "raw transcript...", duration_ms: 1234, words: 87 }`
 
 ### `POST /v1/cleanup`
@@ -88,9 +96,15 @@ Transcript → cleaned text. Hot path. **THIS IS WHERE METERING HAPPENS.** See p
   "model": "fast" | "premium-haiku" | "premium-sonnet" | "premium-opus" | "premium-gpt41",
   "transcript": "...",
   "mode": "auto" | "email" | "slack" | "code" | "raw",
-  "dictionary": ["Spontent", "ClickFunnels", ...]
+  "dictionary": ["Spontent", "ClickFunnels", ...],
+  "dev_dictionary": ["git", "GitHub", "kubectl", ...]
 }
 ```
+`dev_dictionary` is the built-in developer vocabulary from the desktop app's
+Rust `DEV_DICTIONARY` (the single source of truth — the worker keeps no copy).
+Sent only in `code` mode; the worker injects it as a "DEV VOCABULARY" block
+ahead of the user dictionary, mirroring the on-device prompt so premium cloud
+cleanup matches the free on-device path. Empty/absent → block omitted.
 **Response (success):** `{ text: "cleaned text", model_used: "premium-haiku", words_in: 87, words_out: 84, cost_cents: 4 }`
 **Response (cap exceeded):** `{ fallback: "fast", reason: "cap_exceeded", usage: {...}, cap_cents: 2000 }` (HTTP 402)
 
