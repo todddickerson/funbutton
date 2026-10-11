@@ -19,6 +19,24 @@ Branch mechanics: PROGRESS.md/CLAUDE.md updates stay on `loop-24h-oct11` only (t
 **Next:** CoW-clone vendor/target/node_modules from main checkout, run the full regression gate set.
 **Blocked:** none.
 
+## 2026-10-11 12:10 — P1 REGRESSION PASS on main-as-is: ALL GREEN, nothing to fix
+
+Ran the full gate set in the loop worktree (vendor/target/node_modules CoW-cloned from the main checkout, per the R3 pattern):
+
+- `cargo check` → clean (10.9s) · `cargo fmt --check` → rc 0 · `cargo build --release` → clean (2m30s)
+- `cargo test --release --lib` → **80 passed / 0 failed / 7 ignored** (exactly main's count)
+- `cargo clippy --release --all-targets -- -D warnings` → rc 0
+- `apps/worker` `npx tsc --noEmit` → rc 0
+- macOS-26 crash grep guard (`rdev|TSMGetInputSource|TISCopy|UCKeyTranslate`) → 5 hits, all doc comments, zero live call sites
+- Keyless offline STT (no GROQ_API_KEY, model from App Support store) → `"Refactor the auth middleware and open a pull request."`
+- **Real-binary end-to-end through the hotkey code path**: `FUNBUTTON_SELFTEST=1 FUNBUTTON_SELFTEST_WAV=… ./target/release/funbutton` — both CGEventTaps installed, whisper on Metal (8.8s cold), llama-server ready (10.9s), synthetic Down/Up → recorder → whisper (91ms) → cleanup → `selftest: paste suppressed; cleaned = "Refactor the auth middleware and open a pull request."` Zero crash reports.
+- Bonus P2 evidence from the same launch: with models already in the store, the log shows **zero model-download/migration activity** — only the 6-model manifest metadata fetch.
+
+(Env note: AppleEvent quit of the *dev* binary hangs on an Automation-TCC prompt in this shell — the installed app's quit path is unaffected and was proven in v0.1.8 QA; teardown code untouched. Used SIGTERM + child kill to clean up the test processes.)
+
+**Next:** P2 — DMG-upgrade model migration: pin the invariants with unit tests, document the proof.
+**Blocked:** none.
+
 ## 2026-09-15 09:52 — Cloud dev-vocab parity: premium path stops being worse than free (branch `feat-cloud-dev-vocab-parity`, PR open)
 
 **Fixes GAUNTLET finding [E]: the premium cloud path delivered a *weaker* dev experience than free offline.** Two gaps closed — the worker's cleanup `CODE_PROMPT` had no `DEV_DICTIONARY`, and the cloud STT call (`cloud.rs::transcribe`) sent no vocabulary-bias prompt. So a paying user's "git/kubectl/pnpm/Groq" transcribed and cleaned *worse* than a free on-device user's. Now both cloud legs get the same dev bias as the on-device/BYOK paths.
