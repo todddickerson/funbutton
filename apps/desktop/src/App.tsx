@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { AlertTriangle, ChevronRight } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight } from "lucide-react";
 import "./App.css";
 import { HotkeyPicker } from "./HotkeyPicker";
 import { hotkeyHold, hotkeyName, hotkeyShort, type HotkeyKind } from "./hotkeys";
@@ -133,6 +133,9 @@ function App() {
   const [historyMode, setHistoryMode] = useState<string>("all");
   const [lastFailed, setLastFailed] = useState<HistoryEntry | null>(null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [wipeArmed, setWipeArmed] = useState(false);
+  const [groqKeyCheck, setGroqKeyCheck] = useState<null | "checking" | "ok" | "bad" | "unreachable">(null);
+  const groqCheckSeq = useRef(0);
   // License state
   const [licenseInfo, setLicenseInfo] = useState<LicenseInfo | null>(null);
   const [licenseDraftJwt, setLicenseDraftJwt] = useState<string>("");
@@ -399,6 +402,31 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, settings?.license_jwt]);
 
+  // Inline key validation on blur (gauntlet [B]: the engine row said "key
+  // set" without ever checking it — a typo'd key surfaced only as the first
+  // failed dictation).
+  async function validateGroqKeyNow(key: string) {
+    const k = key.trim();
+    // Sequence guard: a slow response for an old key must never label the
+    // key the user has since typed (review finding).
+    const seq = ++groqCheckSeq.current;
+    if (!k) {
+      setGroqKeyCheck(null);
+      return;
+    }
+    setGroqKeyCheck("checking");
+    try {
+      const ok = await invoke<boolean>("validate_groq_key", { key: k });
+      if (seq !== groqCheckSeq.current) return; // stale response
+      setGroqKeyCheck(ok ? "ok" : "bad");
+    } catch (e) {
+      if (seq !== groqCheckSeq.current) return;
+      // Only a real 401 means the key is bad — offline/429/5xx is
+      // "couldn't check", not "rejected" (review finding).
+      setGroqKeyCheck(String(e).includes("invalid key") ? "bad" : "unreachable");
+    }
+  }
+
   async function copyEntry(id: number) {
     try {
       await invoke("history_copy", { id });
@@ -406,6 +434,32 @@ function App() {
       setTimeout(() => setCopiedId(null), 1200);
     } catch (e) {
       console.error("history_copy failed", e);
+    }
+  }
+
+  async function deleteEntry(id: number) {
+    try {
+      await invoke("history_delete", { id });
+      refreshHistory();
+    } catch (e) {
+      console.error("history_delete failed", e);
+    }
+  }
+
+  async function wipeAllHistory() {
+    // Two-click arm: destructive, so the first click only arms the button.
+    if (!wipeArmed) {
+      setWipeArmed(true);
+      setTimeout(() => setWipeArmed(false), 3000);
+      return;
+    }
+    setWipeArmed(false);
+    try {
+      const n = await invoke<number>("history_clear_all");
+      pushToast("ok", `history wiped — ${n} ${n === 1 ? "entry" : "entries"} gone for good`);
+      refreshHistory();
+    } catch (e) {
+      pushToast("warn", `wipe failed: ${e}`);
     }
   }
 
@@ -669,10 +723,32 @@ function App() {
                 className="fb-input"
                 type="password"
                 value={settings.groq_api_key}
-                onChange={(e) => update("groq_api_key", e.target.value)}
-                onBlur={saveDrafts}
+                onChange={(e) => {
+                  update("groq_api_key", e.target.value);
+                  groqCheckSeq.current++; // invalidate any in-flight check
+                  setGroqKeyCheck(null);
+                }}
+                onBlur={(e) => {
+                  saveDrafts();
+                  validateGroqKeyNow(e.target.value);
+                }}
                 placeholder="gsk_… (optional — everything works without it)"
               />
+              {groqKeyCheck && (
+                <span className={`fb-keycheck ${groqKeyCheck}`}>
+                  {groqKeyCheck === "checking" ? (
+                    "checking…"
+                  ) : groqKeyCheck === "ok" ? (
+                    <>
+                      <Check size={11} /> key valid
+                    </>
+                  ) : groqKeyCheck === "unreachable" ? (
+                    "couldn't check (offline?) — key saved anyway"
+                  ) : (
+                    "key rejected — double-check it"
+                  )}
+                </span>
+              )}
             </div>
             <div className="fb-fieldrow">
               <span className="fb-selname">ollama model</span>
@@ -918,6 +994,15 @@ function App() {
               <option value="all">all modes</option>
               {modesInHistory.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
+            {history.length > 0 && (
+              <button
+                className={`fb-btn-small fb-btn-danger ${wipeArmed ? "fb-armed" : ""}`}
+                onClick={wipeAllHistory}
+                title="delete every entry immediately — no waiting on retention"
+              >
+                {wipeArmed ? "sure? wipe it all" : "wipe all now"}
+              </button>
+            )}
           </div>
 
           {history.length === 0 ? (
@@ -940,6 +1025,13 @@ function App() {
                         <span className="fb-history-spacer" />
                         <button className="fb-btn-small" onClick={() => copyEntry(h.id)}>
                           {copiedId === h.id ? "copied ✓" : "copy"}
+                        </button>
+                        <button
+                          className="fb-btn-small fb-btn-danger"
+                          onClick={() => deleteEntry(h.id)}
+                          title="delete this entry now"
+                        >
+                          delete
                         </button>
                       </div>
                       <div className="fb-history-cleaned">{h.cleaned_text}</div>

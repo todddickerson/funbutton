@@ -717,6 +717,8 @@ kbd {
 .fb-btn-small:hover { border-color: var(--accent); color: var(--accent); }
 .fb-btn-danger { color: var(--accent-ink); }
 .fb-btn-danger:hover { color: #fff; background: var(--accent-ink); border-color: var(--accent-ink); }
+/* two-click destructive confirm state (history "wipe all now") */
+.fb-btn-danger.fb-armed { color: #fff; background: var(--accent-ink); border-color: var(--accent-ink); }
 
 /* -------- Stats + footer -------- */
 
@@ -961,3 +963,10 @@ kbd {
   background: linear-gradient(90deg, var(--accent-ink), var(--accent));
   transition: width 0.3s ease;
 }
+
+/* inline groq-key validation result (check-on-blur) */
+.fb-keycheck { font-size: 11px; white-space: nowrap; display: inline-flex; align-items: center; gap: 3px; }
+.fb-keycheck.checking { color: var(--dim); }
+.fb-keycheck.ok { color: var(--ok); }
+.fb-keycheck.bad { color: var(--bad); }
+.fb-keycheck.unreachable { color: var(--dim); }
