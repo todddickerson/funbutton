@@ -133,6 +133,7 @@ function App() {
   const [historyMode, setHistoryMode] = useState<string>("all");
   const [lastFailed, setLastFailed] = useState<HistoryEntry | null>(null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [wipeArmed, setWipeArmed] = useState(false);
   // License state
   const [licenseInfo, setLicenseInfo] = useState<LicenseInfo | null>(null);
   const [licenseDraftJwt, setLicenseDraftJwt] = useState<string>("");
@@ -406,6 +407,32 @@ function App() {
       setTimeout(() => setCopiedId(null), 1200);
     } catch (e) {
       console.error("history_copy failed", e);
+    }
+  }
+
+  async function deleteEntry(id: number) {
+    try {
+      await invoke("history_delete", { id });
+      refreshHistory();
+    } catch (e) {
+      console.error("history_delete failed", e);
+    }
+  }
+
+  async function wipeAllHistory() {
+    // Two-click arm: destructive, so the first click only arms the button.
+    if (!wipeArmed) {
+      setWipeArmed(true);
+      setTimeout(() => setWipeArmed(false), 3000);
+      return;
+    }
+    setWipeArmed(false);
+    try {
+      const n = await invoke<number>("history_clear_all");
+      pushToast("ok", `history wiped — ${n} ${n === 1 ? "entry" : "entries"} gone for good`);
+      refreshHistory();
+    } catch (e) {
+      pushToast("warn", `wipe failed: ${e}`);
     }
   }
 
@@ -918,6 +945,15 @@ function App() {
               <option value="all">all modes</option>
               {modesInHistory.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
+            {history.length > 0 && (
+              <button
+                className={`fb-btn-small fb-btn-danger ${wipeArmed ? "fb-armed" : ""}`}
+                onClick={wipeAllHistory}
+                title="delete every entry immediately — no waiting on retention"
+              >
+                {wipeArmed ? "sure? wipe it all" : "wipe all now"}
+              </button>
+            )}
           </div>
 
           {history.length === 0 ? (
@@ -940,6 +976,13 @@ function App() {
                         <span className="fb-history-spacer" />
                         <button className="fb-btn-small" onClick={() => copyEntry(h.id)}>
                           {copiedId === h.id ? "copied ✓" : "copy"}
+                        </button>
+                        <button
+                          className="fb-btn-small fb-btn-danger"
+                          onClick={() => deleteEntry(h.id)}
+                          title="delete this entry now"
+                        >
+                          delete
                         </button>
                       </div>
                       <div className="fb-history-cleaned">{h.cleaned_text}</div>
