@@ -48,6 +48,13 @@ Ran the full gate set in the loop worktree (vendor/target/node_modules CoW-clone
 **Next:** P3 — Confucius4-R2T2 experimental opt-in STT. Research verdicts in hand: **sidecar python** (mlx-audio-swift supports Qwen3-ASR but has NO hotword input and is untested on these weights — hotwords are the point of this feature; patching+validating Swift is >1 day). License pinned: NetEase Youdao Model Use License Agreement (11,071 B, sha256 4d9321cd…, canonical raw URL in netease-youdao/Confucius4-R2T2@master) + required derivative notice text from the HF card. Proven spike venv pins: python 3.12.11, mlx-audio 0.5.5, mlx 0.32.2, transformers 5.17.0.
 **Blocked:** none.
 
+## 2026-10-11 18:35 — Dictionary export shipped (PR #29) · 15-branch union green · adversarial review next
+
+**PR #29 `feat/dictionary-import-export`** — copy-all export + the paste-to-import path made explicit in the hint. 15 PRs open (#15–#29); full merge matrix still zero-conflict; union diff = 25 files / +2822 −117, gates all green (98/0/10 · clippy · fmt · desktop+worker ts).
+
+**Next:** adversarial critic pass over the whole union diff (assume it's broken; fix what's confirmed), then hold for the sweep.
+**Blocked:** v0.1.9 cut still blocked on the sweep.
+
 ## 2026-10-11 18:15 — Deep-context STT bias shipped (PR #28) · 14-branch union green · v0.1.9 ship block pre-staged
 
 - **PR #28 `feat/stt-title-bias`** (stacked on #15→#17→#18) — the gauntlet follow-up "deep-context is not fed to the whisper STT prompt", built **evidence-first**: on dev.wav, adding the window-title token turned whisper-base's "Off-Middleware RSS" into "auth-middleware.rs" (plus ClickFunnels + kubectl correct). Order user-dict > title tokens > dev built-ins, case-insensitive dedupe, ≤150 ms bounded context wait only when capture is on, title tokens never reach cloud STT prompts without the `context_to_cloud` opt-in. Shared `title_tokens` tokenizer with the R2T2 hotword builder. `FUNBUTTON_TEST_PROMPT` env for one-command prompt A/Bs.
