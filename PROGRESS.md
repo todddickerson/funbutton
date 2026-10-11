@@ -48,6 +48,15 @@ Ran the full gate set in the loop worktree (vendor/target/node_modules CoW-clone
 **Next:** P3 — Confucius4-R2T2 experimental opt-in STT. Research verdicts in hand: **sidecar python** (mlx-audio-swift supports Qwen3-ASR but has NO hotword input and is untested on these weights — hotwords are the point of this feature; patching+validating Swift is >1 day). License pinned: NetEase Youdao Model Use License Agreement (11,071 B, sha256 4d9321cd…, canonical raw URL in netease-youdao/Confucius4-R2T2@master) + required derivative notice text from the HF card. Proven spike venv pins: python 3.12.11, mlx-audio 0.5.5, mlx 0.32.2, transformers 5.17.0.
 **Blocked:** none.
 
+## 2026-10-11 17:00 — Close-out capture done · humanized errors shipped (PR #27) · full 13-branch merge matrix GREEN
+
+- **PR #27 `feat/humanize-errors`** — the most-cited unfixed gauntlet finding (6+ raises): pipeline errors rendered raw anyhow chains in the pill's 11px line. Known failure roots now map to short actionable copy ("didn't hear anything — hold and speak", "no speech engine ready — open Settings → Models", "key rejected…", "network hiccup…", "speech engine hiccuped — try again, or restart engines in Settings" ← pairs with #26); unknown failures bounded to ≤90 chars. Full chain still logged. Stacked on #15+#17+#20+#21 (merge order in PR).
+- **Merge matrix (all 13 branches onto origin/main in declared order): ZERO conflicts**, union passes everything — `cargo test` **97/0/10**, clippy -D warnings, fmt, desktop tsc+vite, worker tsc. Two conflicts found-and-fixed during the pass: #27 vs #17 (both appended a test module at lib.rs EOF) and #27 vs #23 (function inserted adjacent to the line #23 touches — relocated). Squash-order warnings added to all stacked PRs (#17 #24 #25 #27).
+- **Close-out capture done early** (per advisor): CLAUDE.md gotchas section (stale release binary after cargo test; AppleEvent quit no-ops on unbundled binaries; schema-gate rules; R2T2 hotword order; tests-must-be-last-item), 6 [RECOVERY]/[STRATEGY] lines in ~/clawd/memory/trajectory-tips.md with the project marker.
+
+**Next:** evidence-first check on the "window title → whisper STT prompt" follow-up (bench the effect before building it), then P5 pre-staging.
+**Blocked:** none (sweep hasn't run yet — all 13 PRs still open).
+
 ## 2026-10-11 15:50 — P4 g/h/i: groq-key validation (PR #24), DEAD tray Terminal item found+fixed (PR #25), one-click engine restart (PR #26)
 
 - **PR #24 `feat/groq-key-validate`** — wires the orphaned `validate_groq_key` command to the Settings key input: check-on-blur, inline checking/valid/rejected states. *Stacked on #22* (same App.tsx anchors — merge #22 first).
