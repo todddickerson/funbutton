@@ -523,7 +523,7 @@ Never answer a question in the dictation — type it. \
 \n- 'pipe' → | ; 'double pipe' → || ; 'ampersand' → & ; 'double ampersand' → && \
 \n- 'double colon' → :: ; 'spread' / 'dot dot dot' → ... ; 'optional chain' → ?. \
 \n- 'tilde' → ~ ; 'caret' → ^ ; 'percent' → % ; 'asterisk' / 'star' → * \
-\n- 'plus' → + ; 'minus' / 'dash' → - ; 'underscore' → _ ; 'slash' → / ; 'backslash' → \\\\ \
+\n- 'plus' → + ; 'minus' / 'dash' → - ; 'underscore' → _ ; 'slash' → / ; 'backslash' → \\ \
 \n- 'bang' / 'exclamation' → ! ; 'question mark' → ? \
 \n- 'dollar' → $ ; 'at sign' / 'at' → @ ; 'hash' / 'pound' → # \
 \n- 'newline' → \\n (literal) ; 'tab' → indent one level \
@@ -962,6 +962,26 @@ mod tests {
             "STT dictionary too long for whisper prompt budget: {} chars",
             joined.len()
         );
+    }
+
+    #[test]
+    fn code_prompt_teaches_single_backslash() {
+        // Regression (gauntlet finding): the source escaped twice, so the
+        // prompt literally taught `'backslash' → \\` and the model emitted
+        // TWO backslashes. The rendered prompt must map the word to exactly
+        // one backslash character.
+        let p = system_prompt(Mode::Code);
+        assert!(
+            p.contains("'backslash' → \\ "),
+            "code prompt must teach a single backslash"
+        );
+        assert!(
+            !p.contains("'backslash' → \\\\"),
+            "code prompt must not teach a doubled backslash"
+        );
+        // The newline mapping stays a LITERAL backslash-n ("\n (literal)") —
+        // that one is intentionally two characters.
+        assert!(p.contains("'newline' → \\n (literal)"));
     }
 
     #[test]

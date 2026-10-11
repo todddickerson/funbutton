@@ -504,4 +504,45 @@ mod tests {
         }
         assert_eq!(resolve_as_pipeline(&state, &front), Mode::Terminal);
     }
+
+    /// Pins build_stt_prompt's two documented, load-bearing guarantees
+    /// (gauntlet finding: they were untested): user-dictionary terms load
+    /// FIRST and outrank the built-ins when the ~600-char whisper budget runs
+    /// out, and truncation never splits a term.
+    #[test]
+    fn stt_prompt_user_terms_lead_and_truncation_is_term_safe() {
+        // User terms lead, built-ins follow (dev mode pulls the curated list).
+        let dict = vec!["ClickFunnels".to_string(), "Etison".to_string()];
+        let p = super::build_stt_prompt(&dict, Mode::Code).unwrap();
+        assert!(
+            p.starts_with("ClickFunnels, Etison"),
+            "user terms must lead: {p}"
+        );
+        assert!(
+            p.contains(cleanup::DEV_DICTIONARY_STT[0]),
+            "built-ins follow in dev mode"
+        );
+        assert!(p.len() <= 600, "budget: {} chars", p.len());
+
+        // Non-dev mode: user dictionary only, no built-ins.
+        let p = super::build_stt_prompt(&dict, Mode::Email).unwrap();
+        assert_eq!(p, "ClickFunnels, Etison");
+
+        // Empty input → None (no prompt at all, not an empty string).
+        assert!(super::build_stt_prompt(&[], Mode::Email).is_none());
+
+        // An oversized user dictionary crowds the built-ins out entirely —
+        // user terms outrank — and truncation keeps whole terms only.
+        let big: Vec<String> = (0..200).map(|i| format!("useropolis{i:03}")).collect();
+        let p = super::build_stt_prompt(&big, Mode::Code).unwrap();
+        assert!(p.len() <= 600);
+        assert!(p.starts_with("useropolis000"));
+        assert!(
+            !p.contains(cleanup::DEV_DICTIONARY_STT[0]),
+            "built-ins must be crowded out, not user terms"
+        );
+        for t in p.split(", ") {
+            assert!(big.iter().any(|b| b == t), "truncation split a term: {t:?}");
+        }
+    }
 }
