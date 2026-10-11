@@ -113,11 +113,17 @@ export function ModelManager({ pushToast }: { pushToast: (kind: "info" | "warn" 
     refresh();
     // `models-changed` fires after any download/delete/set-active/migration.
     const un = listen("funbutton:models-changed", () => refresh());
+    // One-time R2T2 runtime setup can take minutes on a slow pipe — surface
+    // each stage so "starting" isn't a silent wait.
+    const unRt = listen<string>("funbutton:r2t2-runtime", (e) => {
+      pushToast("info", `R2T2 setup: ${e.payload}`);
+    });
     // Poll while anything is downloading so install/active flip live even if an
     // event is missed.
     const id = setInterval(refresh, 1500);
     return () => {
       un.then((u) => u());
+      unRt.then((u) => u());
       clearInterval(id);
     };
   }, []);

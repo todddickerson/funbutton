@@ -85,8 +85,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             from mlx_audio.stt.utils import load_audio
 
-            # miniaudio decodes from a file path; keep the temp file inside our
-            # runtime dir (0600 by default) and remove it immediately.
+            # miniaudio decodes from a file path; the temp file lives in the
+            # runtime dir's tmp/ and is removed immediately after decode.
             with tempfile.NamedTemporaryFile(
                 suffix=".wav", dir=str(TMP_DIR), delete=False
             ) as f:
@@ -117,8 +117,17 @@ def main() -> int:
     port = int(sys.argv[1])
     model_dir = sys.argv[2]
 
+    # Scratch WAVs live under the runtime dir (this script is written there by
+    # the app), not the world-readable system tmp. Best-effort cleanup of any
+    # leftovers from a prior kill -9.
     global TMP_DIR
-    TMP_DIR = Path(tempfile.mkdtemp(prefix="fb-r2t2-"))
+    TMP_DIR = Path(__file__).resolve().parent / "tmp"
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
+    for stale in TMP_DIR.glob("*.wav"):
+        try:
+            stale.unlink()
+        except OSError:
+            pass
 
     # Bind first so the app's /health poll connects immediately (503 while the
     # model loads on a background thread), mirroring llama-server's behavior.

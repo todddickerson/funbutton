@@ -367,11 +367,22 @@ fn active_r2t2_entry(state: &AppStateHandle) -> Option<models::ModelEntry> {
         .cloned()
 }
 
+/// Should a freshly-started R2T2 sidecar be stored? No if quit began, and no
+/// if the user's active STT pick moved away while it was provisioning /
+/// starting (a flip-flop must not leave a 1.5 GB model resident for an
+/// engine nobody picked).
+fn should_store_r2t2(state: &AppStateHandle) -> bool {
+    !state.shutting_down.load(Ordering::SeqCst) && active_r2t2_entry(state).is_some()
+}
+
 /// Mirror of `store_or_reap_cleanup` for the R2T2 sidecar: store the handle,
-/// or kill it if quit began while it was starting.
+/// or kill it if quit began — or the pick changed — while it was starting.
+/// The decision and the store happen under the `r2t2` lock, which both quit
+/// teardown and `sync_r2t2`'s kill path also take, so a server is either
+/// visible to their kill or reaped here.
 fn store_or_reap_r2t2(state: &AppStateHandle, server: r2t2::R2t2Server) -> bool {
     let mut guard = state.r2t2.lock();
-    if state.shutting_down.load(Ordering::SeqCst) {
+    if !should_store_r2t2(state) {
         drop(guard);
         server.kill();
         false
@@ -396,6 +407,14 @@ fn sync_r2t2(app: &AppHandle, state: &AppStateHandle) {
     if state.r2t2.lock().is_some() {
         return; // already up
     }
+    // One starter at a time: a pick flip-flop (R2T2 → whisper → R2T2) during
+    // the minutes-long first provisioning must not race two `uv` runs over
+    // the same runtime dir. The in-flight task re-checks the pick before
+    // storing (store_or_reap_r2t2), so a task started for an abandoned pick
+    // reaps its server instead of leaking it.
+    if state.r2t2_starting.swap(true, Ordering::SeqCst) {
+        return; // a provision-and-spawn task is already in flight
+    }
     *state.r2t2_error.lock() = None;
     let app = app.clone();
     let state = Arc::clone(state);
@@ -405,17 +424,25 @@ fn sync_r2t2(app: &AppHandle, state: &AppStateHandle) {
             if let Err(e) = r2t2::provision(&app).await {
                 log::warn!("r2t2 runtime provisioning failed: {e:#}");
                 *state.r2t2_error.lock() = Some(format!("runtime setup failed: {e}"));
+                state.r2t2_starting.store(false, Ordering::SeqCst);
                 let _ = app.emit("funbutton:models-changed", ());
                 tray::sync(&app);
                 return;
             }
+        }
+        // Pick moved away during provisioning? Don't even spawn.
+        if !should_store_r2t2(&state) {
+            log::info!("r2t2 sidecar not started: pick changed during provisioning");
+            state.r2t2_starting.store(false, Ordering::SeqCst);
+            let _ = app.emit("funbutton:models-changed", ());
+            return;
         }
         match r2t2::R2t2Server::spawn(model_dir).await {
             Ok(server) => {
                 if store_or_reap_r2t2(&state, server) {
                     log::info!("r2t2 sidecar ready");
                 } else {
-                    log::info!("r2t2 sidecar reaped: quit began during startup");
+                    log::info!("r2t2 sidecar reaped: quit or pick-change during startup");
                 }
             }
             Err(e) => {
@@ -423,6 +450,7 @@ fn sync_r2t2(app: &AppHandle, state: &AppStateHandle) {
                 *state.r2t2_error.lock() = Some(e.to_string());
             }
         }
+        state.r2t2_starting.store(false, Ordering::SeqCst);
         let _ = app.emit("funbutton:models-changed", ());
         tray::sync(&app);
     });
@@ -1688,4 +1716,72 @@ fn days_to_ymd(mut days: i64) -> (i64, u32, u32) {
     let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
     let y = if m <= 2 { y + 1 } else { y };
     (y, m, d)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::history::History;
+    use crate::models::test_support::ENV_LOCK;
+    use crate::state::{AppState, Settings};
+
+    /// Pins the pick-flip-flop race decision: a sidecar that finished
+    /// starting is stored only if the R2T2 model is STILL the active pick
+    /// (and quit hasn't begun). Uses a throwaway store with sparse files at
+    /// the manifest's exact pinned sizes, so `is_installed` is genuinely
+    /// exercised without 1.6 GB on disk.
+    #[test]
+    fn r2t2_store_decision_follows_the_live_pick() {
+        let _env = ENV_LOCK.lock();
+        let tmp = std::env::temp_dir().join(format!("fb-r2t2-decision-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let saved = std::env::var("FUNBUTTON_MODELS_DIR").ok();
+        std::env::set_var("FUNBUTTON_MODELS_DIR", &tmp);
+
+        let history = Arc::new(History::open(std::path::PathBuf::from(":memory:")).unwrap());
+        let state = AppState::new(Settings::default(), history);
+
+        // Default pick (whisper) → never store a sidecar.
+        assert!(!should_store_r2t2(&state), "whisper pick must not store");
+
+        // Pick R2T2 but files absent → still no (model uninstalled).
+        state.settings.lock().stt_model_id = "confucius4-r2t2".into();
+        assert!(
+            !should_store_r2t2(&state),
+            "uninstalled model must not store"
+        );
+
+        // Materialize the model as sparse files at the exact pinned sizes.
+        let entry = models::Manifest::baked()
+            .entry("confucius4-r2t2")
+            .unwrap()
+            .clone();
+        let dir = models::model_path(&entry);
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in &entry.files {
+            let file = std::fs::File::create(dir.join(&f.filename)).unwrap();
+            file.set_len(f.size_bytes).unwrap();
+        }
+        assert!(models::is_installed(&entry), "sparse files at exact sizes");
+        assert!(should_store_r2t2(&state), "active + installed → store");
+
+        // The user flips back to whisper while the sidecar was starting.
+        state.settings.lock().stt_model_id = "whisper-base.en".into();
+        assert!(
+            !should_store_r2t2(&state),
+            "pick moved away during startup → reap, never store"
+        );
+
+        // Quit beats everything.
+        state.settings.lock().stt_model_id = "confucius4-r2t2".into();
+        state.shutting_down.store(true, Ordering::SeqCst);
+        assert!(!should_store_r2t2(&state), "quit in progress → reap");
+
+        match saved {
+            Some(v) => std::env::set_var("FUNBUTTON_MODELS_DIR", v),
+            None => std::env::remove_var("FUNBUTTON_MODELS_DIR"),
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

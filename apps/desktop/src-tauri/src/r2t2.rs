@@ -435,7 +435,10 @@ impl R2t2Server {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         if !status.is_success() {
-            return Err(anyhow!("r2t2 transcribe {status}: {text}"));
+            // Truncate the body: a python exception string could embed prompt
+            // content (hotwords), and this error reaches the app log.
+            let brief: String = text.chars().take(160).collect();
+            return Err(anyhow!("r2t2 transcribe {status}: {brief}"));
         }
         let parsed: TranscribeResponse =
             serde_json::from_str(&text).context("parse r2t2 transcribe response")?;

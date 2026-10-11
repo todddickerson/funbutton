@@ -376,6 +376,10 @@ pub struct AppState {
     /// Set when the R2T2 sidecar (or its runtime provisioning) failed, so the
     /// UI can distinguish "still warming up" from "not going to happen".
     pub r2t2_error: Mutex<Option<String>>,
+    /// True while a provision-and-spawn task for the R2T2 sidecar is in
+    /// flight — prevents a pick flip-flop from racing two provisioners over
+    /// the same runtime dir (see `sync_r2t2`).
+    pub r2t2_starting: AtomicBool,
 }
 
 pub type AppStateHandle = Arc<AppState>;
@@ -400,6 +404,7 @@ impl AppState {
             downloads: DownloadManager::new(),
             r2t2: Mutex::new(None),
             r2t2_error: Mutex::new(None),
+            r2t2_starting: AtomicBool::new(false),
         })
     }
 }
