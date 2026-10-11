@@ -1323,6 +1323,26 @@ fn handle_hotkey_loop(
                 if state.shutting_down.load(Ordering::SeqCst) {
                     continue;
                 }
+                // Re-entrancy gate (gauntlet #8): a hold landing while the
+                // previous dictation is still in flight would overlap
+                // recordings, let the finishing pipeline clobber the
+                // Recording status (tray + HUD lie), and hide the pill mid-
+                // recording when the old run returns. Refuse it and say why;
+                // a double-Down during Recording is a listener double-fire —
+                // dropped silently so the live hold's Up still pairs.
+                let current = *state.status.lock();
+                if !current.accepts_new_hold() {
+                    if current == Status::Recording {
+                        continue;
+                    }
+                    log::info!("hold refused: previous dictation still {}", current.label());
+                    emit_status(
+                        &app,
+                        current,
+                        Some("busy — still finishing the last one".into()),
+                    );
+                    continue;
+                }
                 let mut rec = recorder.lock();
                 match rec.start() {
                     Ok(()) => {
@@ -1344,6 +1364,13 @@ fn handle_hotkey_loop(
                 }
             }
             HotkeyEvent::Up => {
+                // Pair of the re-entrancy gate: an Up whose Down was refused
+                // (or whose recorder never started) has no live recording —
+                // running the stop path anyway would clobber the in-flight
+                // pipeline's status back to Idle and hide its pill.
+                if *state.status.lock() != Status::Recording {
+                    continue;
+                }
                 let (wav, audio_duration_ms) = {
                     let mut rec = recorder.lock();
                     if rec.sample_count() < 4_000 {
