@@ -56,14 +56,40 @@ impl Role {
     }
 }
 
+/// Which engine executes a model. `Builtin` = the compiled-in engines
+/// (whisper.cpp for STT, llama-server for cleanup); `MlxR2t2` = the
+/// experimental python MLX sidecar (see `crate::r2t2`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ModelRuntime {
+    #[default]
+    Builtin,
+    MlxR2t2,
+}
+
+/// One file of a multi-file model (schema v2). Lands in the store under
+/// `<models_dir>/<entry.filename>/<file.filename>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelFile {
+    pub filename: String,
+    pub url: String,
+    pub sha256: String,
+    pub size_bytes: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEntry {
     pub id: String,
     pub role: Role,
     pub name: String,
+    /// Single-file model: the file name in the store. Multi-file model
+    /// (`files` non-empty): the store *subdirectory* name.
     pub filename: String,
     pub url: String,
+    /// Single-file models only; empty when `files` carries per-file hashes.
     pub sha256: String,
+    /// Single-file: the file's size. Multi-file: the sum of `files` sizes
+    /// (pinned by a manifest test).
     pub size_bytes: u64,
     #[serde(default)]
     pub blurb: String,
@@ -75,6 +101,12 @@ pub struct ModelEntry {
     pub recommended: bool,
     #[serde(default = "default_min_app")]
     pub min_app_version: String,
+    #[serde(default)]
+    pub runtime: ModelRuntime,
+    /// Schema v2: multi-file models (e.g. an MLX safetensors directory).
+    /// Empty for classic single-gguf entries.
+    #[serde(default)]
+    pub files: Vec<ModelFile>,
 }
 
 fn default_min_app() -> String {
@@ -150,14 +182,23 @@ pub fn model_path(entry: &ModelEntry) -> PathBuf {
     models_dir().join(&entry.filename)
 }
 
-/// Cheap installed check: the file exists with the exact expected byte length.
-/// Full SHA verification happens at download/migration time (a finalized file
-/// is only ever produced after its hash matched), so a length match here is a
-/// trustworthy, hash-free proxy for the model manager list.
+/// Cheap installed check: the file exists with the exact expected byte length
+/// (every file, for multi-file models). Full SHA verification happens at
+/// download/migration time (a finalized file is only ever produced after its
+/// hash matched), so a length match here is a trustworthy, hash-free proxy
+/// for the model manager list.
 pub fn is_installed(entry: &ModelEntry) -> bool {
-    std::fs::metadata(model_path(entry))
-        .map(|m| m.len() == entry.size_bytes)
-        .unwrap_or(false)
+    if entry.files.is_empty() {
+        return std::fs::metadata(model_path(entry))
+            .map(|m| m.len() == entry.size_bytes)
+            .unwrap_or(false);
+    }
+    let dir = model_path(entry);
+    entry.files.iter().all(|f| {
+        std::fs::metadata(dir.join(&f.filename))
+            .map(|m| m.len() == f.size_bytes)
+            .unwrap_or(false)
+    })
 }
 
 /// Total bytes used by installed manifest models under the models dir.
@@ -302,8 +343,10 @@ struct ProgressEvent {
     error: Option<String>,
 }
 
-fn emit_progress(app: &AppHandle, ev: ProgressEvent) {
-    let _ = app.emit("funbutton:model-progress", ev);
+fn emit_progress(app: Option<&AppHandle>, ev: ProgressEvent) {
+    if let Some(app) = app {
+        let _ = app.emit("funbutton:model-progress", ev);
+    }
 }
 
 /// Download (or resume) a model into the models dir, verify its SHA-256, and
@@ -320,12 +363,12 @@ pub async fn download(
     entry: ModelEntry,
 ) -> Result<()> {
     let cancel = manager.register(&entry.id);
-    let result = download_inner(&app, &entry, &cancel).await;
+    let result = download_inner(Some(&app), &entry, &cancel).await;
     manager.deregister(&entry.id);
 
     match &result {
         Ok(()) => emit_progress(
-            &app,
+            Some(&app),
             ProgressEvent {
                 id: entry.id.clone(),
                 role: entry.role.label(),
@@ -340,12 +383,12 @@ pub async fn download(
         Err(e) => {
             let cancelled = cancel.load(Ordering::SeqCst);
             emit_progress(
-                &app,
+                Some(&app),
                 ProgressEvent {
                     id: entry.id.clone(),
                     role: entry.role.label(),
                     status: if cancelled { "cancelled" } else { "error" },
-                    downloaded: current_part_len(&entry),
+                    downloaded: bytes_on_disk(&entry),
                     total: entry.size_bytes,
                     speed_bps: 0,
                     eta_secs: 0,
@@ -357,22 +400,122 @@ pub async fn download(
     result
 }
 
-fn part_path(entry: &ModelEntry) -> PathBuf {
-    models_dir().join(format!("{}.part", entry.filename))
+/// One concrete file to fetch: either the whole single-file model, or one
+/// member of a multi-file model. `base` is how many bytes of the entry were
+/// already completed by earlier files — progress events always speak in
+/// whole-entry terms so the UI shows one coherent bar.
+struct FileSpec {
+    url: String,
+    sha256: String,
+    size_bytes: u64,
+    dest: PathBuf,
+    base: u64,
 }
 
-fn current_part_len(entry: &ModelEntry) -> u64 {
-    std::fs::metadata(part_path(entry))
-        .map(|m| m.len())
-        .unwrap_or(0)
+impl FileSpec {
+    fn part(&self) -> PathBuf {
+        self.dest.with_file_name(format!(
+            "{}.part",
+            self.dest.file_name().unwrap_or_default().to_string_lossy()
+        ))
+    }
 }
 
-async fn download_inner(app: &AppHandle, entry: &ModelEntry, cancel: &AtomicBool) -> Result<()> {
+/// Bytes of this entry currently on disk (finals + parts) — for honest
+/// progress in the error/cancel event.
+fn bytes_on_disk(entry: &ModelEntry) -> u64 {
+    let len = |p: &std::path::Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+    if entry.files.is_empty() {
+        let f = model_path(entry);
+        let part = models_dir().join(format!("{}.part", entry.filename));
+        return len(&f).max(len(&part));
+    }
+    let dir = model_path(entry);
+    entry
+        .files
+        .iter()
+        .map(|f| {
+            let fin = dir.join(&f.filename);
+            let part = dir.join(format!("{}.part", f.filename));
+            len(&fin).max(len(&part))
+        })
+        .sum()
+}
+
+async fn download_inner(
+    app: Option<&AppHandle>,
+    entry: &ModelEntry,
+    cancel: &AtomicBool,
+) -> Result<()> {
     ensure_models_dir()?;
-    let final_path = model_path(entry);
+    if entry.files.is_empty() {
+        let spec = FileSpec {
+            url: entry.url.clone(),
+            sha256: entry.sha256.clone(),
+            size_bytes: entry.size_bytes,
+            dest: model_path(entry),
+            base: 0,
+        };
+        return download_file(app, entry, &spec, cancel).await;
+    }
+    // Multi-file model: everything lands in the entry's store subdirectory,
+    // sequentially, each file resumable + SHA-verified on its own.
+    let dir = model_path(entry);
+    std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    let mut base = 0u64;
+    for f in &entry.files {
+        let spec = FileSpec {
+            url: f.url.clone(),
+            sha256: f.sha256.clone(),
+            size_bytes: f.size_bytes,
+            dest: dir.join(&f.filename),
+            base,
+        };
+        download_file(app, entry, &spec, cancel).await?;
+        base += f.size_bytes;
+    }
+    write_derivative_notice(entry, &dir);
+    Ok(())
+}
+
+/// Required attribution for derivative-licensed models — written alongside the
+/// weights so redistribution terms travel with them (the license text itself
+/// is a pinned manifest file, LICENSE-R2T2.txt).
+const R2T2_NOTICE: &str = "\
+NOTICE — Confucius4-R2T2 (MLX 4-bit)
+
+This directory contains a Derivative Work of NetEase Youdao's Confucius4-R2T2
+(itself a fine-tune of Qwen/Qwen3-ASR-1.7B), quantized and converted to MLX
+format (selcukkubur/Confucius4-R2T2-mlx-4bit on Hugging Face).
+
+Notice required by the NetEase Youdao Model Use License Agreement §4.1(a):
+
+  Any modifications made to the original model in this Derivative Work are
+  not endorsed, warranted, or guaranteed by the original right-holder of the
+  original model, and the original right-holder disclaims all liability
+  related to this Derivative Work.
+
+The full license text is in LICENSE-R2T2.txt in this directory.
+";
+
+fn write_derivative_notice(entry: &ModelEntry, dir: &std::path::Path) {
+    if entry.runtime == ModelRuntime::MlxR2t2 {
+        if let Err(e) = std::fs::write(dir.join("NOTICE-R2T2.txt"), R2T2_NOTICE) {
+            log::warn!("could not write NOTICE-R2T2.txt: {e}");
+        }
+    }
+}
+
+async fn download_file(
+    app: Option<&AppHandle>,
+    entry: &ModelEntry,
+    spec: &FileSpec,
+    cancel: &AtomicBool,
+) -> Result<()> {
+    let fname = spec.dest.file_name().unwrap_or_default().to_string_lossy();
     // Already there and the right size? Verify hash and short-circuit.
-    if std::fs::metadata(&final_path)
-        .map(|m| m.len() == entry.size_bytes)
+    if std::fs::metadata(&spec.dest)
+        .map(|m| m.len() == spec.size_bytes)
         .unwrap_or(false)
     {
         emit_progress(
@@ -381,26 +524,26 @@ async fn download_inner(app: &AppHandle, entry: &ModelEntry, cancel: &AtomicBool
                 id: entry.id.clone(),
                 role: entry.role.label(),
                 status: "verifying",
-                downloaded: entry.size_bytes,
+                downloaded: spec.base + spec.size_bytes,
                 total: entry.size_bytes,
                 speed_bps: 0,
                 eta_secs: 0,
                 error: None,
             },
         );
-        let got = sha256_file(&final_path)?;
-        if got.eq_ignore_ascii_case(&entry.sha256) {
+        let got = sha256_file(&spec.dest)?;
+        if got.eq_ignore_ascii_case(&spec.sha256) {
             return Ok(());
         }
-        log::warn!("existing {} failed hash — re-downloading", entry.filename);
-        let _ = std::fs::remove_file(&final_path);
+        log::warn!("existing {fname} failed hash — re-downloading");
+        let _ = std::fs::remove_file(&spec.dest);
     }
 
     const MAX_ATTEMPTS: u32 = 5;
     let mut attempt = 0u32;
     loop {
         attempt += 1;
-        match fetch_to_part(app, entry, cancel).await {
+        match fetch_to_part(app, entry, spec, cancel).await {
             Ok(()) => break,
             Err(e) => {
                 if cancel.load(Ordering::SeqCst) {
@@ -413,8 +556,7 @@ async fn download_inner(app: &AppHandle, entry: &ModelEntry, cancel: &AtomicBool
                 // `.part` file persists, so the next attempt resumes.
                 let backoff = Duration::from_secs(1u64 << (attempt - 1).min(3));
                 log::warn!(
-                    "download {} attempt {attempt} failed ({e:#}); retrying in {}s",
-                    entry.filename,
+                    "download {fname} attempt {attempt} failed ({e:#}); retrying in {}s",
                     backoff.as_secs()
                 );
                 sleep_cancellable(backoff, cancel).await;
@@ -426,13 +568,13 @@ async fn download_inner(app: &AppHandle, entry: &ModelEntry, cancel: &AtomicBool
     }
 
     // Full file is on disk as `.part`. Verify before promoting.
-    let pp = part_path(entry);
+    let pp = spec.part();
     let len = std::fs::metadata(&pp).map(|m| m.len()).unwrap_or(0);
-    if len != entry.size_bytes {
+    if len != spec.size_bytes {
         let _ = std::fs::remove_file(&pp);
         return Err(anyhow!(
             "size mismatch after download: got {len}, expected {}",
-            entry.size_bytes
+            spec.size_bytes
         ));
     }
     emit_progress(
@@ -441,7 +583,7 @@ async fn download_inner(app: &AppHandle, entry: &ModelEntry, cancel: &AtomicBool
             id: entry.id.clone(),
             role: entry.role.label(),
             status: "verifying",
-            downloaded: len,
+            downloaded: spec.base + len,
             total: entry.size_bytes,
             speed_bps: 0,
             eta_secs: 0,
@@ -449,38 +591,41 @@ async fn download_inner(app: &AppHandle, entry: &ModelEntry, cancel: &AtomicBool
         },
     );
     let got = sha256_file(&pp)?;
-    if !got.eq_ignore_ascii_case(&entry.sha256) {
+    if !got.eq_ignore_ascii_case(&spec.sha256) {
         let _ = std::fs::remove_file(&pp);
         return Err(anyhow!(
-            "sha256 mismatch for {}: got {got}, expected {} — deleted, retry",
-            entry.filename,
-            entry.sha256
+            "sha256 mismatch for {fname}: got {got}, expected {} — deleted, retry",
+            spec.sha256
         ));
     }
-    std::fs::rename(&pp, &final_path)
-        .with_context(|| format!("promote {} into place", entry.filename))?;
+    std::fs::rename(&pp, &spec.dest).with_context(|| format!("promote {fname} into place"))?;
     log::info!(
-        "model {} downloaded + verified ({} bytes)",
-        entry.filename,
-        entry.size_bytes
+        "model file {fname} downloaded + verified ({} bytes)",
+        spec.size_bytes
     );
     Ok(())
 }
 
-/// One download attempt: opens (or resumes) `<filename>.part` and streams the
+/// One download attempt: opens (or resumes) the file's `.part` and streams the
 /// body in, honoring the cancel flag between chunks and emitting throttled
-/// progress. Returns Ok once the `.part` reaches the expected size.
-async fn fetch_to_part(app: &AppHandle, entry: &ModelEntry, cancel: &AtomicBool) -> Result<()> {
+/// progress (in whole-entry terms via `spec.base`). Returns Ok once the
+/// `.part` reaches the expected size.
+async fn fetch_to_part(
+    app: Option<&AppHandle>,
+    entry: &ModelEntry,
+    spec: &FileSpec,
+    cancel: &AtomicBool,
+) -> Result<()> {
     use std::io::Write as _;
 
-    let pp = part_path(entry);
+    let pp = spec.part();
     let mut have = std::fs::metadata(&pp).map(|m| m.len()).unwrap_or(0);
-    if have > entry.size_bytes {
+    if have > spec.size_bytes {
         // Corrupt/oversized leftover — start clean.
         let _ = std::fs::remove_file(&pp);
         have = 0;
     }
-    if have == entry.size_bytes {
+    if have == spec.size_bytes {
         return Ok(());
     }
 
@@ -488,7 +633,7 @@ async fn fetch_to_part(app: &AppHandle, entry: &ModelEntry, cancel: &AtomicBool)
         .timeout(Duration::from_secs(600))
         .connect_timeout(Duration::from_secs(20))
         .build()?;
-    let mut req = client.get(&entry.url);
+    let mut req = client.get(&spec.url);
     if have > 0 {
         req = req.header(reqwest::header::RANGE, format!("bytes={have}-"));
     }
@@ -518,7 +663,7 @@ async fn fetch_to_part(app: &AppHandle, entry: &ModelEntry, cancel: &AtomicBool)
             id: entry.id.clone(),
             role: entry.role.label(),
             status: "downloading",
-            downloaded,
+            downloaded: spec.base + downloaded,
             total: entry.size_bytes,
             speed_bps: 0,
             eta_secs: 0,
@@ -538,7 +683,8 @@ async fn fetch_to_part(app: &AppHandle, entry: &ModelEntry, cancel: &AtomicBool)
         if last_emit.elapsed() >= Duration::from_millis(250) {
             let win = window_start.elapsed().as_secs_f64().max(0.001);
             let speed = (window_bytes as f64 / win) as u64;
-            let remaining = entry.size_bytes.saturating_sub(downloaded);
+            // ETA over the whole entry, so a multi-file bar reads coherently.
+            let remaining = entry.size_bytes.saturating_sub(spec.base + downloaded);
             let eta = remaining.checked_div(speed).unwrap_or(0);
             emit_progress(
                 app,
@@ -546,7 +692,7 @@ async fn fetch_to_part(app: &AppHandle, entry: &ModelEntry, cancel: &AtomicBool)
                     id: entry.id.clone(),
                     role: entry.role.label(),
                     status: "downloading",
-                    downloaded,
+                    downloaded: spec.base + downloaded,
                     total: entry.size_bytes,
                     speed_bps: speed,
                     eta_secs: eta,
@@ -561,15 +707,15 @@ async fn fetch_to_part(app: &AppHandle, entry: &ModelEntry, cancel: &AtomicBool)
     file.flush().ok();
     log::info!(
         "download attempt for {} finished at {downloaded}/{} ({:.1}s)",
-        entry.filename,
-        entry.size_bytes,
+        spec.dest.file_name().unwrap_or_default().to_string_lossy(),
+        spec.size_bytes,
         start.elapsed().as_secs_f64()
     );
 
-    if downloaded < entry.size_bytes {
+    if downloaded < spec.size_bytes {
         return Err(anyhow!(
             "stream ended early at {downloaded}/{}",
-            entry.size_bytes
+            spec.size_bytes
         ));
     }
     Ok(())
@@ -587,12 +733,20 @@ async fn sleep_cancellable(dur: Duration, cancel: &AtomicBool) {
 
 /// Delete an installed model (and any stray `.part`). Returns the bytes freed.
 pub fn delete(entry: &ModelEntry) -> Result<u64> {
+    let freed = bytes_on_disk(entry);
     let p = model_path(entry);
-    let freed = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+    if !entry.files.is_empty() {
+        // Multi-file model: the whole store subdirectory (weights, parts,
+        // license + notice) goes.
+        if p.exists() {
+            std::fs::remove_dir_all(&p).with_context(|| format!("delete {}", p.display()))?;
+        }
+        return Ok(freed);
+    }
     if p.exists() {
         std::fs::remove_file(&p).with_context(|| format!("delete {}", p.display()))?;
     }
-    let pp = part_path(entry);
+    let pp = models_dir().join(format!("{}.part", entry.filename));
     if pp.exists() {
         let _ = std::fs::remove_file(&pp);
     }
@@ -648,6 +802,10 @@ pub fn migrate_from_bundle(app: &AppHandle, manifest: &Manifest) -> Vec<String> 
 
     for entry in &manifest.models {
         if is_installed(entry) {
+            continue;
+        }
+        // Multi-file (schema v2) models never shipped inside any old bundle.
+        if !entry.files.is_empty() {
             continue;
         }
         let subdir = match entry.role {
@@ -730,6 +888,12 @@ pub fn migrate_from_bundle(app: &AppHandle, manifest: &Manifest) -> Vec<String> 
 mod tests {
     use super::*;
 
+    /// Serializes tests that mutate the process-global FUNBUTTON_MODELS_DIR
+    /// override (cargo runs tests on parallel threads). parking_lot — no
+    /// poisoning on a failed assert.
+    static ENV_LOCK: Lazy<parking_lot::Mutex<()>> = Lazy::new(|| parking_lot::Mutex::new(()));
+    use once_cell::sync::Lazy;
+
     #[test]
     fn baked_manifest_is_valid_and_has_defaults() {
         let m = Manifest::baked();
@@ -751,11 +915,108 @@ mod tests {
         for e in &m.models {
             assert!(!e.id.is_empty());
             assert!(e.url.starts_with("https://"), "{} url", e.id);
-            assert_eq!(e.sha256.len(), 64, "{} sha256 len", e.id);
             assert!(e.size_bytes > 0, "{} size", e.id);
+            if e.files.is_empty() {
+                assert_eq!(e.sha256.len(), 64, "{} sha256 len", e.id);
+            } else {
+                // Multi-file (schema v2): every member pinned individually,
+                // sizes summing to the entry total the UI displays.
+                for f in &e.files {
+                    assert!(
+                        !f.filename.contains('/'),
+                        "{} {} nested path",
+                        e.id,
+                        f.filename
+                    );
+                    assert!(f.url.starts_with("https://"), "{} {} url", e.id, f.filename);
+                    assert_eq!(f.sha256.len(), 64, "{} {} sha256", e.id, f.filename);
+                    assert!(f.size_bytes > 0, "{} {} size", e.id, f.filename);
+                }
+                assert_eq!(
+                    e.files.iter().map(|f| f.size_bytes).sum::<u64>(),
+                    e.size_bytes,
+                    "{} size_bytes must equal the sum of its files",
+                    e.id
+                );
+            }
         }
         assert!(m.default_id(Role::Stt).is_some());
         assert!(m.default_id(Role::Cleanup).is_some());
+        // Default engines stay builtin — the experimental sidecar runtime is
+        // strictly opt-in.
+        for role in [Role::Stt, Role::Cleanup] {
+            let d = m
+                .models
+                .iter()
+                .find(|x| x.role == role && x.default)
+                .unwrap();
+            assert_eq!(d.runtime, ModelRuntime::Builtin, "{} default runtime", d.id);
+        }
+    }
+
+    #[test]
+    fn multi_file_entry_install_and_delete_semantics() {
+        // FUNBUTTON_MODELS_DIR is process-global; ENV_LOCK serializes the two
+        // tests that touch it (this one and the dmg-upgrade proof).
+        let _env = ENV_LOCK.lock();
+        let tmp = std::env::temp_dir().join(format!("fb-multifile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let saved = std::env::var("FUNBUTTON_MODELS_DIR").ok();
+        std::env::set_var("FUNBUTTON_MODELS_DIR", &tmp);
+
+        let entry = ModelEntry {
+            id: "mf".into(),
+            role: Role::Stt,
+            name: "mf".into(),
+            filename: "mf-dir".into(),
+            url: "https://example.invalid/repo".into(),
+            sha256: String::new(),
+            size_bytes: 10,
+            blurb: String::new(),
+            license: String::new(),
+            default: false,
+            recommended: false,
+            min_app_version: "0.0.0".into(),
+            runtime: ModelRuntime::MlxR2t2,
+            files: vec![
+                ModelFile {
+                    filename: "a.bin".into(),
+                    url: "https://example.invalid/a".into(),
+                    sha256: "0".repeat(64),
+                    size_bytes: 6,
+                },
+                ModelFile {
+                    filename: "b.json".into(),
+                    url: "https://example.invalid/b".into(),
+                    sha256: "0".repeat(64),
+                    size_bytes: 4,
+                },
+            ],
+        };
+        let dir = models_dir().join("mf-dir");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!is_installed(&entry), "no files yet");
+        std::fs::write(dir.join("a.bin"), b"123456").unwrap();
+        assert!(!is_installed(&entry), "one of two files");
+        std::fs::write(dir.join("b.json"), b"1234").unwrap();
+        assert!(is_installed(&entry), "all files at exact size");
+        // Wrong size on any member → not installed.
+        std::fs::write(dir.join("b.json"), b"12345").unwrap();
+        assert!(!is_installed(&entry));
+        std::fs::write(dir.join("b.json"), b"1234").unwrap();
+
+        // model_path is the subdirectory; delete removes it wholesale.
+        assert_eq!(model_path(&entry), dir);
+        let freed = delete(&entry).unwrap();
+        assert_eq!(freed, 10);
+        assert!(!dir.exists());
+
+        match saved {
+            Some(v) => std::env::set_var("FUNBUTTON_MODELS_DIR", v),
+            None => std::env::remove_var("FUNBUTTON_MODELS_DIR"),
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
@@ -767,6 +1028,44 @@ mod tests {
         // Known id → that one.
         let base = m.active_entry(Role::Stt, "whisper-base.en").unwrap();
         assert_eq!(base.id, "whisper-base.en");
+    }
+
+    /// LIVE multi-file download proof: fetches the real R2T2 entry (1.6 GB
+    /// from HF + the NetEase license from GitHub raw) through the production
+    /// download path — per-file resume/verify/promote, NOTICE written — into
+    /// FUNBUTTON_MODELS_DIR (set it! this test intentionally honors the env
+    /// so QA can populate the real store) and asserts installed state.
+    /// `FUNBUTTON_MODELS_DIR=/path cargo test --release --lib \
+    ///    multifile_download_live -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn multifile_download_live() {
+        let entry = Manifest::baked()
+            .entry("confucius4-r2t2")
+            .expect("r2t2 entry in baked manifest")
+            .clone();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let cancel = AtomicBool::new(false);
+        rt.block_on(async {
+            download_inner(None, &entry, &cancel)
+                .await
+                .expect("download");
+        });
+        assert!(is_installed(&entry), "all files at pinned sizes");
+        let dir = model_path(&entry);
+        // License + required derivative notice travel with the weights.
+        let lic = std::fs::read(dir.join("LICENSE-R2T2.txt")).expect("license present");
+        assert_eq!(lic.len(), 11071);
+        let notice = std::fs::read_to_string(dir.join("NOTICE-R2T2.txt")).expect("notice");
+        assert!(notice.contains("not endorsed, warranted, or guaranteed"));
+        eprintln!(
+            "INSTALLED at {} ({} bytes)",
+            dir.display(),
+            entry.size_bytes
+        );
     }
 
     /// The models store must survive a DMG upgrade (dragging a new .app over
@@ -786,9 +1085,10 @@ mod tests {
             "bundle identifier drifted from models::APP_IDENTIFIER — this would orphan installed models"
         );
 
-        // Default store path: HOME-scoped, bundle/exe-independent. (Guard the
-        // env reads/writes: FUNBUTTON_MODELS_DIR is process-global and this is
-        // the only non-ignored test that touches it.)
+        // Default store path: HOME-scoped, bundle/exe-independent.
+        // FUNBUTTON_MODELS_DIR is process-global — ENV_LOCK serializes the
+        // tests that touch it.
+        let _env = ENV_LOCK.lock();
         let saved = std::env::var("FUNBUTTON_MODELS_DIR").ok();
         std::env::remove_var("FUNBUTTON_MODELS_DIR");
         let dir = models_dir();
@@ -827,6 +1127,8 @@ mod tests {
             default: false,
             recommended: false,
             min_app_version: "0.0.0".into(),
+            runtime: ModelRuntime::Builtin,
+            files: Vec::new(),
         };
         assert!(!is_installed(&entry), "empty store → not installed");
         std::fs::write(tmp.join("proof.gguf"), b"12345678").unwrap();

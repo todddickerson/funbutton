@@ -16,6 +16,7 @@ mod keychain;
 mod models;
 mod ollama;
 mod pipeline;
+mod r2t2;
 mod state;
 mod tray;
 
@@ -237,11 +238,24 @@ pub(crate) fn engine_state(state: &AppStateHandle, role: Role) -> &'static str {
         return "missing";
     }
     match role {
-        Role::Stt => match state.stt.status() {
-            crate::embedded_stt::SttStatus::Ready => "ready",
-            crate::embedded_stt::SttStatus::Failed(_) => "failed",
-            crate::embedded_stt::SttStatus::Starting => "starting",
-        },
+        Role::Stt => {
+            // The experimental sidecar-runtime pick reports the sidecar's
+            // state (provisioning reads as "starting"), not whisper's.
+            if entry.runtime == models::ModelRuntime::MlxR2t2 {
+                return if state.r2t2.lock().is_some() {
+                    "ready"
+                } else if state.r2t2_error.lock().is_some() {
+                    "failed"
+                } else {
+                    "starting"
+                };
+            }
+            match state.stt.status() {
+                crate::embedded_stt::SttStatus::Ready => "ready",
+                crate::embedded_stt::SttStatus::Failed(_) => "failed",
+                crate::embedded_stt::SttStatus::Starting => "starting",
+            }
+        }
         Role::Cleanup => {
             if state.embedded.lock().is_some() {
                 "ready"
@@ -315,13 +329,115 @@ fn resolve_model_path(state: &AppStateHandle, role: Role) -> Option<PathBuf> {
     }
 }
 
-/// (Re)load the on-device STT engine from the active model, if installed.
+/// Path of the whisper model the embedded engine should run. When the active
+/// STT pick is a builtin (whisper) model, that's it; when the user picked the
+/// experimental sidecar-runtime model, whisper stays warm on the best
+/// installed builtin (default first) as the fallback chain's first rung.
+fn resolve_whisper_path(state: &AppStateHandle) -> Option<PathBuf> {
+    let manifest = state.manifest.lock();
+    let s = state.settings.lock();
+    if let Some(e) = manifest.active_entry(Role::Stt, &s.stt_model_id) {
+        if e.runtime == models::ModelRuntime::Builtin {
+            return models::is_installed(e).then(|| models::model_path(e));
+        }
+    }
+    let builtin_installed = |pred: &dyn Fn(&models::ModelEntry) -> bool| {
+        manifest
+            .models
+            .iter()
+            .find(|e| {
+                e.role == Role::Stt
+                    && e.runtime == models::ModelRuntime::Builtin
+                    && pred(e)
+                    && models::is_installed(e)
+            })
+            .map(models::model_path)
+    };
+    builtin_installed(&|e| e.default).or_else(|| builtin_installed(&|_| true))
+}
+
+/// The active STT entry iff it's the experimental R2T2 sidecar runtime AND
+/// its files are installed — i.e. the sidecar should be running.
+fn active_r2t2_entry(state: &AppStateHandle) -> Option<models::ModelEntry> {
+    let manifest = state.manifest.lock();
+    let s = state.settings.lock();
+    manifest
+        .active_entry(Role::Stt, &s.stt_model_id)
+        .filter(|e| e.runtime == models::ModelRuntime::MlxR2t2 && models::is_installed(e))
+        .cloned()
+}
+
+/// Mirror of `store_or_reap_cleanup` for the R2T2 sidecar: store the handle,
+/// or kill it if quit began while it was starting.
+fn store_or_reap_r2t2(state: &AppStateHandle, server: r2t2::R2t2Server) -> bool {
+    let mut guard = state.r2t2.lock();
+    if state.shutting_down.load(Ordering::SeqCst) {
+        drop(guard);
+        server.kill();
+        false
+    } else {
+        *guard = Some(Arc::new(server));
+        true
+    }
+}
+
+/// Bring the R2T2 sidecar in line with the active STT pick: spawn it (after
+/// one-time runtime provisioning) when the experimental model is active +
+/// installed, kill it otherwise. Never blocks — all heavy work rides a task.
+fn sync_r2t2(app: &AppHandle, state: &AppStateHandle) {
+    let Some(entry) = active_r2t2_entry(state) else {
+        if let Some(srv) = state.r2t2.lock().take() {
+            log::info!("r2t2 sidecar stopped (model no longer active)");
+            srv.kill();
+        }
+        *state.r2t2_error.lock() = None;
+        return;
+    };
+    if state.r2t2.lock().is_some() {
+        return; // already up
+    }
+    *state.r2t2_error.lock() = None;
+    let app = app.clone();
+    let state = Arc::clone(state);
+    let model_dir = models::model_path(&entry);
+    tauri::async_runtime::spawn(async move {
+        if !r2t2::runtime_ready() {
+            if let Err(e) = r2t2::provision(&app).await {
+                log::warn!("r2t2 runtime provisioning failed: {e:#}");
+                *state.r2t2_error.lock() = Some(format!("runtime setup failed: {e}"));
+                let _ = app.emit("funbutton:models-changed", ());
+                tray::sync(&app);
+                return;
+            }
+        }
+        match r2t2::R2t2Server::spawn(model_dir).await {
+            Ok(server) => {
+                if store_or_reap_r2t2(&state, server) {
+                    log::info!("r2t2 sidecar ready");
+                } else {
+                    log::info!("r2t2 sidecar reaped: quit began during startup");
+                }
+            }
+            Err(e) => {
+                log::warn!("r2t2 sidecar failed to start: {e:#}");
+                *state.r2t2_error.lock() = Some(e.to_string());
+            }
+        }
+        let _ = app.emit("funbutton:models-changed", ());
+        tray::sync(&app);
+    });
+}
+
+/// (Re)load the on-device STT engines for the active model: the embedded
+/// whisper (active builtin pick, or the installed fallback when the sidecar
+/// model is active) and the R2T2 sidecar (spawned/killed to match the pick).
 fn reload_stt(app: &AppHandle, state: &AppStateHandle) {
-    if let Some(path) = resolve_model_path(state, Role::Stt) {
+    if let Some(path) = resolve_whisper_path(state) {
         state.stt.init(app, path);
     } else {
         state.stt.unload();
     }
+    sync_r2t2(app, state);
     tray::sync(app);
 }
 
@@ -1056,11 +1172,14 @@ pub fn run() {
             // makes a keyless install dictate. If it's missing, we don't start
             // the engine; onboarding / the model manager drive the download and
             // then call reload_stt. Same story for cleanup below.
-            if let Some(stt_path) = resolve_model_path(&app_state, Role::Stt) {
+            if let Some(stt_path) = resolve_whisper_path(&app_state) {
                 app_state.stt.init(&app.handle().clone(), stt_path);
             } else {
                 log::info!("STT model not present — awaiting download");
             }
+            // Experimental R2T2 sidecar — only spawns when the user previously
+            // picked it in Settings → Models and its files are installed.
+            sync_r2t2(&app.handle().clone(), &app_state);
 
             // Spawn the local-inference server in the background IF the cleanup
             // model is downloaded. Cold-start is a few seconds; the pipeline
@@ -1286,6 +1405,23 @@ pub(crate) fn shutdown(app: &AppHandle) {
     // against the spawn path so a child can't slip through after this runs.
     if catch_unwind(AssertUnwindSafe(embedded_llm::begin_shutdown_and_reap)).is_err() {
         log::error!("shutdown: llama-server orphan reap panicked (continuing)");
+    }
+
+    // (b.5) Same two-step for the experimental R2T2 sidecar: kill the stored
+    // handle, then latch + reap any child whose startup was still in flight.
+    // Its MLX/Metal state lives in the child process, so the kill is the
+    // whole teardown.
+    if catch_unwind(AssertUnwindSafe(|| {
+        if let Some(srv) = state.r2t2.lock().take() {
+            srv.kill();
+        }
+    }))
+    .is_err()
+    {
+        log::error!("shutdown: r2t2 sidecar kill panicked (continuing)");
+    }
+    if catch_unwind(AssertUnwindSafe(r2t2::begin_shutdown_and_reap)).is_err() {
+        log::error!("shutdown: r2t2 orphan reap panicked (continuing)");
     }
 
     // (c) Unload the whisper/Metal context while Metal is still alive.
