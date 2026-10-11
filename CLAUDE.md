@@ -126,3 +126,12 @@ Go.
   = `entry.filename`; delete removes the whole dir. License + derivative notice
   must travel with the weights (LICENSE-R2T2.txt is a pinned manifest file,
   NOTICE-R2T2.txt is written at install).
+- **`uv venv` refuses an existing venv dir** (exit 2) — any programmatic
+  provisioning MUST pass `--clear`, or one failed/interrupted setup bricks
+  every retry until a hand-delete. (Found by adversarial review, reproduced
+  against pinned uv 0.13.0.)
+- **Run a blind critic over multi-PR unions before calling them done.** The
+  2026-10-11 loop's critic found 4 merge-blockers in work that had green
+  gates + live QA — gates prove the happy path, not the failure paths
+  (panic mid-pipeline, delete-active-model, dead-child recovery, retry-after-
+  failed-setup).
