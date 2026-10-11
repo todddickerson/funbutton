@@ -49,6 +49,49 @@ fn emit_status(app: &AppHandle, status: Status, message: Option<String>) {
     );
 }
 
+/// Map a pipeline failure to a short, human cause for the HUD/onboarding rail.
+/// The full anyhow chain always goes to the log (caller's responsibility) —
+/// this is only what a user can act on, sized for the pill's one-liner.
+fn humanize_pipeline_error(e: &anyhow::Error) -> String {
+    let chain = format!("{e:#}");
+    let lower = chain.to_lowercase();
+    // ORDER MATTERS: the pipeline wraps every per-engine failure inside one
+    // "no transcription backend available (engine: detail | …)" umbrella, so
+    // the SPECIFIC signals (key, network) must be checked before the
+    // umbrella or they can never match (review finding: a Groq-only user
+    // with a revoked key was told to open Settings → Models).
+    let cause = if lower.contains("no speech detected") {
+        "didn't hear anything — hold and speak"
+    } else if lower.contains("invalid api key") || lower.contains("401") || lower.contains("403") {
+        "key rejected — check your Groq key in Settings"
+    } else if lower.contains("connection refused")
+        || lower.contains("timed out")
+        || lower.contains("dns")
+        || lower.contains("network")
+        || lower.contains("connect")
+    {
+        "network hiccup — on-device engines still work; run it back"
+    } else if lower.contains("not ready") || lower.contains("model not present") {
+        "no speech engine ready — open Settings → Models"
+    } else if lower.contains("no transcription backend")
+        || lower.contains("whisper")
+        || lower.contains("stt")
+    {
+        "speech engine hiccuped — try again, or restart engines in Settings"
+    } else {
+        // Unknown failure: first line of the chain, bounded so the pill's
+        // one-liner never gets a wall of nested context.
+        let first = chain.split(':').next().unwrap_or(&chain).trim();
+        let short: String = first.chars().take(90).collect();
+        return if short.len() < first.len() {
+            format!("{short}…")
+        } else {
+            short
+        };
+    };
+    cause.to_string()
+}
+
 #[derive(Serialize, Clone)]
 struct PipelinePayload {
     raw: String,
@@ -1807,41 +1850,6 @@ fn handle_hotkey_loop(
     }
 }
 
-/// Map a pipeline failure to a short, human cause for the HUD/onboarding rail.
-/// The full anyhow chain always goes to the log (caller's responsibility) —
-/// this is only what a user can act on, sized for the pill's one-liner.
-fn humanize_pipeline_error(e: &anyhow::Error) -> String {
-    let chain = format!("{e:#}");
-    let lower = chain.to_lowercase();
-    let cause = if lower.contains("no speech detected") {
-        "didn't hear anything — hold and speak"
-    } else if lower.contains("no transcription backend") {
-        "no speech engine ready — open Settings → Models"
-    } else if lower.contains("invalid api key") || lower.contains("401") || lower.contains("403") {
-        "key rejected — check your Groq key in Settings"
-    } else if lower.contains("connection refused")
-        || lower.contains("timed out")
-        || lower.contains("dns")
-        || lower.contains("network")
-        || lower.contains("connect")
-    {
-        "network hiccup — on-device engines still work; run it back"
-    } else if lower.contains("whisper") || lower.contains("stt") {
-        "speech engine hiccuped — try again, or restart engines in Settings"
-    } else {
-        // Unknown failure: first line of the chain, bounded so the pill's
-        // one-liner never gets a wall of nested context.
-        let first = chain.split(':').next().unwrap_or(&chain).trim();
-        let short: String = first.chars().take(90).collect();
-        return if short.len() < first.len() {
-            format!("{short}…")
-        } else {
-            short
-        };
-    };
-    cause.to_string()
-}
-
 fn chrono_today() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
@@ -1943,19 +1951,30 @@ mod error_copy_tests {
 
     #[test]
     fn known_failures_get_actionable_one_liners() {
+        // REAL error shapes: pipeline::run wraps every per-engine failure in
+        // the "no transcription backend available (engine: detail | …)"
+        // umbrella (pipeline.rs), so each case here mirrors what actually
+        // reaches humanize_pipeline_error — the review caught an earlier
+        // version of this test asserting shapes the pipeline never produces.
         let cases = [
             (anyhow!("no speech detected"), "didn't hear anything"),
+            // Model not downloaded, keyless — the empty-errors umbrella arm.
             (
-                anyhow!("no transcription backend available (embedded-whisper: not ready)"),
+                anyhow!("no transcription backend available (on-device model not ready and no Groq key set)"),
                 "no speech engine ready",
             ),
-            (anyhow!("transcribe 401: invalid api key"), "key rejected"),
+            // Groq-only user with a revoked key: the 401 is INSIDE the
+            // umbrella and must still win over the generic message.
             (
-                anyhow!("send download request: connection refused (os error 61)"),
+                anyhow!("no transcription backend available (cloud: transcribe 401 Unauthorized: invalid api key | embedded-whisper: embedded STT not ready (\"starting\"))"),
+                "key rejected",
+            ),
+            (
+                anyhow!("no transcription backend available (cloud: transcribe request failed: error sending request: client error (Connect): tcp connect error: connection refused)"),
                 "network hiccup",
             ),
             (
-                anyhow!("whisper run: decode failed"),
+                anyhow!("no transcription backend available (embedded-whisper: whisper run: decode failed)"),
                 "speech engine hiccuped",
             ),
         ];
