@@ -2,6 +2,46 @@
 
 > Heartbeat for Todd. One entry per commit-cycle. Newest at top.
 
+## 2026-10-12 11:55 — FINAL: 24h loop complete (11:58→11:58 EDT)
+
+### Shipped — 16 PRs (#15–#30); #15 #16 squash-merged, the other 14 open + MERGEABLE, rebased onto the squashed main, awaiting Ea's sweep
+- **#15** DMG-upgrade model migration proven safe + invariants test-pinned *(merged)*
+- **#16** STT bench harness: whisper vs R2T2 over checked-in fixtures *(merged)*
+- **#17** Confucius4-R2T2 experimental opt-in STT — manifest schema v2 (multi-file models, runtime field, forward-safe schema gate), self-contained pinned uv/python runtime under App Support, MLX sidecar with llama-server-grade lifecycle, hotwords (dictionary + window-title), NetEase license + derivative notice shipped with the weights. Fully live-QA'd (1.6 GB production-path download 29.6 s; cold provisioning ~7 s; `transcribed via r2t2` through the real hotkey path from the bundled .app; teardown reaps sidecar+llama, 0 .ips; hotwords flip "cube control"→"kubectl").
+- **#18** doubled-backslash prompt fix (desktop+worker) + STT-prompt guarantees test-pinned
+- **#19** Settings window tracks tray quick-switches (merges only mode_override — no draft-wiping)
+- **#20** hotkey re-entrancy gate + panic-proof status guard (no overlapped dictations, no bricked gate)
+- **#21** pipeline stage events — honest transcribing/cleaning on HUD + tray (stacked on #20)
+- **#22** history per-entry delete + armed wipe-all, secure_delete + VACUUM
+- **#23** tray words-today midnight rollover
+- **#24** inline groq-key validation on blur (offline ≠ rejected; stale-response guard; stacked on #22)
+- **#25** tray Terminal quick-switch was DEAD since v0.1.8 — found live, fixed structurally (stacked on #23)
+- **#26** one-click engine restart from Settings
+- **#27** humanized pipeline errors — actionable one-liners matching REAL wrapped error shapes (stacked on #15/#17/#20/#21)
+- **#28** deep-context STT bias — window-title tokens into whisper's initial prompt (measured: "Off-Middleware RSS"→"auth-middleware.rs"); 60 s whisper hard ceiling (stacked on #15/#17/#18)
+- **#29** dictionary export (copy all) + explicit paste-to-import
+- **#30** landing micro-fixes: nav download CTA, mobile swipe hint, claims-checked date (NOT deployed)
+
+### Verified
+- Full gates green at every step; final union of all 16 branches: **98 passed / 0 failed / 10 ignored**, clippy `-D warnings`, fmt, desktop tsc+vite, worker tsc, web next build.
+- Live end-to-end on the union release binary, BOTH engine paths (whisper default and R2T2-active), plus bundled-.app AppleEvent-quit teardown (0 orphans, 0 crash reports).
+- **Blind-critic adversarial cycle over the union: 19 findings, every confirmed bug fixed** (4 merge-blockers among them: brickable hotkey gate, unretryable uv provisioning, delete-active-model kept serving, unrecoverable dead sidecar) — all fixes re-verified live.
+- Merge matrix re-proven after every change: all branches apply to main in declared order with zero conflicts; stacks + squash-order documented in each PR.
+- Sweep-resilience: when #15/#16 squashes flipped the stacked branches CONFLICTING, all three were rebased onto the new main with gates re-run within minutes; a GitHub-API TLS-timeout false-"all merged" was caught by independent git verification and the watcher hardened against it.
+
+### Not verified
+- Human-TCC-gated items (unchanged class from every prior release QA): real-mic dictation with R2T2 active, Settings UI click-throughs, eyes-on pill/tray rendering. Exact steps in RUNTIME-QA-r2t2.md §Not verified.
+- v0.1.9 release artifacts — **not cut** (14/16 PRs still unmerged at the hard stop; cutting from a half-merged main would misrepresent the release).
+- Landing changes not deployed (deploy is human-gated by the loop rules).
+
+### Blocked on Todd
+1. **Finish the sweep** (or merge the 14 open PRs — each is MERGEABLE; merge in ascending order, bases before stacks per the PR-body notes). If a squash flips a stacked PR CONFLICTING, `git rebase origin/main <branch>` resolves (known conflict shapes documented in PROGRESS 20:15 entry).
+2. **Then cut v0.1.9** with the ready-to-run ship block (PROGRESS 2026-10-11 18:15 entry): version bump → gates → `cargo tauri build --bundles app` → DMG via the Sequoia hdiutil workaround → `gh release create v0.1.9` (notes from `git log v0.1.8..main`) → `scripts/update-cask.sh` (do NOT skip) → landing: `bash scripts/update-landing-version.sh`, deploy half = `cd apps/web && vercel --prod --yes` with the funbutton-project token.
+3. Human QA pass per RUNTIME-QA-r2t2.md (grant Accessibility to the new build, dictate with R2T2 active, watch `title_tokens>0` in the debug log).
+4. Developer ID signing remains the permanent "damaged"-dialog fix (SIGNING.md steps 1–2).
+
+State left behind: R2T2 model (1.62 GB) + runtime (466 MB) installed under App Support (delete via Settings → Models if unwanted); settings restored to whisper-base default; no stray processes; loop worktree clean on all branches.
+
 ## 2026-10-11 11:58 — 24h loop STARTED (branch `loop-24h-oct11`)
 
 **Start time: 2026-10-11 11:58 EDT. Hard stop: 2026-10-12 11:58 EDT.**
