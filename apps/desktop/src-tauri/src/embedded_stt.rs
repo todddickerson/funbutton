@@ -372,7 +372,10 @@ mod tests {
             .expect("load model");
         if let Ok(wav) = std::env::var("FUNBUTTON_TEST_WAV") {
             let bytes = std::fs::read(&wav).expect("read wav");
-            let text = stt.transcribe_wav(&bytes, None).expect("transcribe");
+            // Optional initial-prompt override — lets a bench A/B prompt
+            // variants (e.g. window-title tokens) against the same wav.
+            let prompt = std::env::var("FUNBUTTON_TEST_PROMPT").ok();
+            let text = stt.transcribe_wav(&bytes, prompt).expect("transcribe");
             eprintln!("MODEL {model} → {text:?}");
             assert!(!text.trim().is_empty(), "expected non-empty transcript");
         }
