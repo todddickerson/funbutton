@@ -594,6 +594,18 @@ async fn restart_engines(
 }
 
 #[tauri::command]
+fn history_delete(state: tauri::State<'_, AppStateHandle>, id: i64) -> Result<bool, String> {
+    state.history.delete(id).map_err(|e| e.to_string())
+}
+
+/// Wipe the entire local history immediately (the privacy story's "clear all
+/// now" — retention auto-purge alone makes a user wait out the window).
+#[tauri::command]
+fn history_clear_all(state: tauri::State<'_, AppStateHandle>) -> Result<u64, String> {
+    state.history.clear_all().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn history_last_failed(
     state: tauri::State<'_, AppStateHandle>,
 ) -> Result<Option<history::HistoryEntry>, String> {
@@ -1001,6 +1013,8 @@ pub fn run() {
             history_list,
             history_copy,
             history_purge_now,
+            history_delete,
+            history_clear_all,
             history_last_failed,
             models_list,
             models_download,

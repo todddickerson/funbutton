@@ -717,6 +717,8 @@ kbd {
 .fb-btn-small:hover { border-color: var(--accent); color: var(--accent); }
 .fb-btn-danger { color: var(--accent-ink); }
 .fb-btn-danger:hover { color: #fff; background: var(--accent-ink); border-color: var(--accent-ink); }
+/* two-click destructive confirm state (history "wipe all now") */
+.fb-btn-danger.fb-armed { color: #fff; background: var(--accent-ink); border-color: var(--accent-ink); }
 
 /* -------- Stats + footer -------- */
 

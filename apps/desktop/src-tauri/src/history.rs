@@ -44,6 +44,10 @@ impl History {
         }
         let conn =
             Connection::open(&path).with_context(|| format!("opening sqlite at {:?}", path))?;
+        // Privacy: zero freed pages on DELETE so a removed dictation doesn't
+        // linger in sqlite's freelist on disk until some future write.
+        conn.pragma_update(None, "secure_delete", "ON")
+            .context("enable secure_delete")?;
         conn.execute_batch(SCHEMA).context("apply schema")?;
         Ok(History {
             conn: Mutex::new(conn),
@@ -151,6 +155,27 @@ impl History {
             .context("purge old history")?;
         Ok(n as u64)
     }
+
+    /// Delete a single entry (a sensitive dictation shouldn't have to wait
+    /// out the retention window). Returns true if a row was removed.
+    pub fn delete(&self, id: i64) -> Result<bool> {
+        let conn = self.conn.lock();
+        let n = conn
+            .execute("DELETE FROM history WHERE id = ?1", params![id])
+            .context("delete history row")?;
+        Ok(n > 0)
+    }
+
+    /// Wipe the entire history NOW, then VACUUM so the file shrinks and no
+    /// transcript text survives in unused pages. Returns rows removed.
+    pub fn clear_all(&self) -> Result<u64> {
+        let conn = self.conn.lock();
+        let n = conn
+            .execute("DELETE FROM history", [])
+            .context("clear history")?;
+        conn.execute_batch("VACUUM").context("vacuum after clear")?;
+        Ok(n as u64)
+    }
 }
 
 fn now_secs() -> i64 {
@@ -158,4 +183,52 @@ fn now_secs() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mem() -> History {
+        History::open(PathBuf::from(":memory:")).unwrap()
+    }
+
+    fn seed(h: &History, n: usize) -> Vec<i64> {
+        (0..n)
+            .map(|i| {
+                h.insert_pre_paste(
+                    &format!("raw {i}"),
+                    &format!("clean {i}"),
+                    "auto",
+                    None,
+                    None,
+                    "test",
+                )
+                .unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn delete_removes_exactly_one_entry() {
+        let h = mem();
+        let ids = seed(&h, 3);
+        assert!(h.delete(ids[1]).unwrap());
+        let left = h.list(10, None, None).unwrap();
+        assert_eq!(left.len(), 2);
+        assert!(left.iter().all(|e| e.id != ids[1]));
+        // Deleting a gone/nonexistent id reports false, never errors.
+        assert!(!h.delete(ids[1]).unwrap());
+        assert!(!h.delete(999_999).unwrap());
+    }
+
+    #[test]
+    fn clear_all_wipes_everything_now() {
+        let h = mem();
+        seed(&h, 5);
+        assert_eq!(h.clear_all().unwrap(), 5);
+        assert!(h.list(10, None, None).unwrap().is_empty());
+        // Idempotent.
+        assert_eq!(h.clear_all().unwrap(), 0);
+    }
 }
