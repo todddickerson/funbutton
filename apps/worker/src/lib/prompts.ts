@@ -73,7 +73,7 @@ const CODE_PROMPT =
   "\n- 'comma' → , ; 'semicolon' → ; ; 'colon' → : ; 'dot' / 'period' → . " +
   "\n- 'pipe' → | ; 'double pipe' → || ; 'ampersand' → & ; 'double ampersand' → && " +
   "\n- 'tilde' → ~ ; 'caret' → ^ ; 'percent' → % ; 'asterisk' / 'star' → * " +
-  "\n- 'plus' → + ; 'minus' / 'dash' → - ; 'underscore' → _ ; 'slash' → / ; 'backslash' → \\\\ " +
+  "\n- 'plus' → + ; 'minus' / 'dash' → - ; 'underscore' → _ ; 'slash' → / ; 'backslash' → \\ " +
   "\n- 'bang' / 'exclamation' → ! ; 'question' / 'question mark' → ? " +
   "\n- 'dollar' → $ ; 'at sign' / 'at' → @ ; 'hash' / 'pound' / 'hashtag' → # " +
   "\n- 'newline' → \\n (literal) ; 'tab' → indent one level " +
