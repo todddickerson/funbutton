@@ -578,6 +578,21 @@ fn history_purge_now(state: tauri::State<'_, AppStateHandle>) -> Result<u64, Str
         .map_err(|e| e.to_string())
 }
 
+/// Restart both on-device engines in place (gauntlet [B]/[D]: when whisper
+/// or llama-server failed, the only remedy was relaunching the whole app).
+/// Reuses the exact reload paths the model manager already runs on a model
+/// switch, so a wedged engine is recoverable from Settings in one click.
+#[tauri::command]
+async fn restart_engines(
+    app: AppHandle,
+    state: tauri::State<'_, AppStateHandle>,
+) -> Result<(), String> {
+    log::info!("restart_engines: user-requested engine restart");
+    reload_stt(&app, state.inner());
+    reload_cleanup(&app, state.inner()).await;
+    Ok(())
+}
+
 #[tauri::command]
 fn history_last_failed(
     state: tauri::State<'_, AppStateHandle>,
@@ -975,6 +990,7 @@ pub fn run() {
             simulate_hotkey,
             ollama_check,
             embedded_check,
+            restart_engines,
             open_settings,
             open_onboarding,
             close_onboarding,
