@@ -134,7 +134,7 @@ struct CleanupRequest {
 /// unreserved ASCII alphanumeric — the result is pure ASCII (letters, digits,
 /// and `%XX`), so it round-trips any UTF-8 (e.g. an accented user-dictionary
 /// term) without a percent-encoding dependency.
-fn encode_header_value(s: &str) -> String {
+pub(crate) fn encode_header_value(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
     for &b in s.as_bytes() {
         if b.is_ascii_alphanumeric() {
