@@ -20,7 +20,15 @@ pub struct PipelineResult {
     pub guard: Option<&'static str>,
 }
 
-pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<PipelineResult> {
+/// `on_status` reports mid-pipeline stage transitions (Transcribing,
+/// Cleaning) to the caller the moment they happen, so the HUD and the tray
+/// menu reflect the real stage instead of polling or lagging a phase. The
+/// pipeline still owns the `AppState.status` writes.
+pub async fn run(
+    state: AppStateHandle,
+    wav: Vec<u8>,
+    on_status: &(dyn Fn(Status) + Send + Sync),
+) -> anyhow::Result<PipelineResult> {
     let (
         api_key,
         backend,
@@ -79,6 +87,7 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
     };
 
     *state.status.lock() = Status::Transcribing;
+    on_status(Status::Transcribing);
 
     // Transcription chain. On-device whisper is the default (zero key,
     // offline); Groq/cloud is the optional faster path. Whatever the user
@@ -244,6 +253,7 @@ pub async fn run(state: AppStateHandle, wav: Vec<u8>) -> anyhow::Result<Pipeline
     };
 
     *state.status.lock() = Status::Cleaning;
+    on_status(Status::Cleaning);
 
     let embedded = state.embedded.lock().clone();
 
